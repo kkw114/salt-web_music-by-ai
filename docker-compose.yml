@@ -1,0 +1,10 @@
+services:
+  musicplayer:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${MUSIC_DIR:-./testmusic}:/music
+    environment:
+      - MUSIC_DIR=/music
+    restart: unless-stopped
