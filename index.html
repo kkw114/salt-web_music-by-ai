@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Refined Local Player</title>
+    <title>Salt Player</title>
     <link rel="stylesheet" href="css/styles.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -29,16 +29,29 @@
     <div id="welcome-screen" class="welcome-screen">
         <div class="welcome-content">
             <div class="welcome-icon">🎵</div>
-            <h1>Refined Local Player</h1>
-            <p>正在扫描 testmusic 目录...</p>
+            <h1>Salt Player</h1>
+            <p>正在加载...</p>
             <button id="btn-open-folder" class="btn-primary">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
                 </svg>
                 重新扫描
             </button>
-            <p class="welcome-hint">自动扫描 testmusic 目录 | MP3 / FLAC / WAV / OGG / AAC / M4A</p>
+            <p class="welcome-hint">Salt Player | MP3 / FLAC / WAV / OGG / AAC / M4A</p>
         </div>
+        <div class="welcome-debug">
+            <label class="debug-toggle">
+                <input type="checkbox" id="debug-switch"> 调试模式
+            </label>
+        </div>
+    </div>
+    <div id="debug-log-panel" style="display:none">
+        <div class="debug-log-header" id="debug-log-header">
+            <span>调试日志</span>
+            <button id="debug-clear-btn" title="清除日志">🗑</button>
+            <button id="debug-copy-btn" title="复制日志">📋</button>
+        </div>
+        <pre id="debug-log"></pre>
     </div>
 
     <div id="player-container" class="player-container hidden">
@@ -202,7 +215,17 @@
                         <span class="source-folder-count" id="source-all-count">0</span>
                     </div>
                 </div>
-                <div id="source-tab-webdav" class="hidden">WebDAV 功能开发中...</div>
+                <div id="source-tab-webdav" class="hidden">
+                    <div class="webdav-user-bar" id="webdav-user-bar">
+                        <div class="webdav-user-bar-header" id="webdav-user-bar-header">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                            <span>WebDAV 账号 (<span id="webdav-user-count">0</span>)</span>
+                            <svg class="webdav-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                        </div>
+                        <div class="webdav-user-list hidden" id="webdav-saved-list"></div>
+                    </div>
+                    <div id="webdav-folder-list" class="source-folder-list hidden"></div>
+                </div>
                 <div id="source-tab-local" class="hidden">
                     <button id="btn-local-folder" class="source-local-btn">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

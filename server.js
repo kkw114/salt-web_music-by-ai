@@ -1,7 +1,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const { parseFile } = require('music-metadata');
+const { parseFile, parseBuffer } = require('music-metadata');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,7 +11,204 @@ const AUDIO_EXTS = ['.mp3', '.flac', '.wav', '.ogg', '.aac', '.m4a', '.wma', '.o
 
 app.use(express.static(__dirname));
 app.use('/music', express.static(MUSIC_DIR));
+app.use(express.json());
 
+// WebDAV session store
+const webdavSessions = {};
+
+function parsePropfindXML(xml) {
+    const results = [];
+    // Support both D: and plain XML namespaces
+    const prefix = xml.indexOf('D:href') > -1 ? 'D:' : '';
+    const hrefRegex = new RegExp('<' + prefix + 'href>([^<]+)<\/' + prefix + 'href>', 'gi');
+    const collectionRegex = new RegExp('<' + prefix + 'collection[^>]*\/>', 'gi');
+    const displayNameRegex = new RegExp('<' + prefix + 'displayname>([^<]+)<\/' + prefix + 'displayname>', 'gi');
+    const getContentLengthRegex = new RegExp('<' + prefix + 'getcontentlength>([^<]+)<\/' + prefix + 'getcontentlength>', 'gi');
+
+    const responses = xml.split(/<[A-Za-z]*:?response>/gi).slice(1);
+    for (const resp of responses) {
+        hrefRegex.lastIndex = 0;
+        const hrefMatch = hrefRegex.exec(resp);
+        if (!hrefMatch) continue;
+        var raw = hrefMatch[1].trim();
+        var href = raw;
+        try { var decoded = decodeURIComponent(raw); if (decoded !== raw) href = decoded; } catch(e) {}
+
+        collectionRegex.lastIndex = 0;
+        const isDir = collectionRegex.test(resp);
+
+        displayNameRegex.lastIndex = 0;
+        const nameMatch = displayNameRegex.exec(resp);
+        const name = nameMatch ? nameMatch[1] : href.split('/').filter(Boolean).pop() || href;
+
+        getContentLengthRegex.lastIndex = 0;
+        const sizeMatch = getContentLengthRegex.exec(resp);
+        const size = sizeMatch ? parseInt(sizeMatch[1]) : 0;
+
+        results.push({ name, href, isDir, size });
+    }
+    return results;
+}
+
+function makeWebdavRequest(sessionId, method, urlPath, body, headers) {
+    const session = webdavSessions[sessionId];
+    if (!session) return Promise.reject(new Error('No session'));
+
+    // Encode Chinese chars in URL, preserving forward slashes
+    var rawUrl = session.url.replace(/[^\x00-\x7F]+/g, function(m) { return encodeURIComponent(m); });
+    const baseUrl = new URL(rawUrl);
+    const isHttps = baseUrl.protocol === 'https:';
+    const httpMod = isHttps ? require('https') : require('http');
+    const basePath = baseUrl.pathname.replace(/\/$/, '');
+    // If urlPath is absolute (starts with /), use it directly
+    var fullPath;
+    if (urlPath && urlPath.charAt(0) === '/') {
+        fullPath = urlPath;
+    } else {
+        fullPath = (basePath ? basePath + '/' : '/') + (urlPath || '').replace(/^\//, '');
+    }
+    fullPath = fullPath.replace(/\/{2,}/g, '/');
+
+    const auth = Buffer.from(session.username + ':' + session.password).toString('base64');
+
+    return new Promise((resolve, reject) => {
+        const options = {
+            hostname: baseUrl.hostname,
+            port: baseUrl.port || (isHttps ? 443 : 80),
+            path: fullPath,
+            method: method,
+            rejectUnauthorized: false,
+            headers: Object.assign({
+                'Authorization': 'Basic ' + auth,
+                'Host': baseUrl.hostname
+            }, headers || {})
+        };
+
+        const req = httpMod.request(options, (res) => {
+            const chunks = [];
+            res.on('data', c => chunks.push(c));
+            res.on('end', () => {
+                resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) });
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+        if (body) req.write(body);
+        req.end();
+    });
+}
+
+// Connect to WebDAV
+app.post('/api/webdav/connect', async (req, res) => {
+    try {
+        const { url, username, password } = req.body;
+        const sessionId = 'webdav-' + Date.now();
+        var rawUrl = url.replace(/[^\x00-\x7F]+/g, function(m) { return encodeURIComponent(m); });
+        webdavSessions[sessionId] = { url: url, username, password };
+        // Test connection with OPTIONS first (more widely supported)
+        var result = await makeWebdavRequest(sessionId, 'OPTIONS', '', null, {});
+        if (result.status < 200 || result.status >= 400) {
+            // Try PROPFIND as fallback
+            result = await makeWebdavRequest(sessionId, 'PROPFIND', '', '<?xml version="1.0"?><D:propfind xmlns:D="DAV:"><D:prop><D:displayname/><D:resourcetype/></D:prop></D:propfind>', { 'Depth': '0', 'Content-Type': 'application/xml' });
+        }
+        if (result.status >= 200 && result.status < 400) {
+            res.json({ sessionId });
+        } else {
+            delete webdavSessions[sessionId];
+            res.status(401).json({ error: '连接失败: HTTP ' + result.status });
+        }
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// List WebDAV directory
+app.get('/api/webdav/list', async (req, res) => {
+    try {
+        const { session, path: dirPath } = req.query;
+        const decodedPath = decodeURIComponent(dirPath || '');
+        const encodedPath = decodedPath.split('/').map(function(seg) { return encodeURIComponent(seg); }).join('/');
+        const body = '<?xml version="1.0"?><D:propfind xmlns:D="DAV:"><D:prop><D:displayname/><D:resourcetype/><D:getlastmodified/><D:getcontentlength/></D:prop></D:propfind>';
+        const result = await makeWebdavRequest(session, 'PROPFIND', encodedPath || '', body, { 'Depth': '1', 'Content-Type': 'application/xml' });
+        const entries = parsePropfindXML(result.body.toString('utf-8'));
+        const children = entries.filter(e => {
+            const ePath = e.href.replace(/\/$/, '');
+            const basePath = (decodedPath || '').replace(/\/$/, '');
+            return ePath !== basePath;
+        });
+        res.json(children);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Stream WebDAV file (with Range support for seeking)
+app.get('/api/webdav/stream', (req, res) => {
+    (async () => {
+        try {
+            const { session, path: filePath } = req.query;
+            const decodedPath = decodeURIComponent(filePath || '');
+            const encodedPath = decodedPath.split('/').map(function(seg) { return encodeURIComponent(seg); }).join('/');
+            const session2 = webdavSessions[session];
+            if (!session2) { res.status(401).end(); return; }
+            const rawUrl = session2.url.replace(/[^\x00-\x7F]+/g, m => encodeURIComponent(m));
+            const baseUrl = new URL(rawUrl);
+            const isHttps = baseUrl.protocol === 'https:';
+            const httpMod = isHttps ? require('https') : require('http');
+            const auth = Buffer.from(session2.username + ':' + session2.password).toString('base64');
+            const options = {
+                hostname: baseUrl.hostname,
+                port: baseUrl.port || (isHttps ? 443 : 80),
+                path: encodedPath.replace(/\/{2,}/g, '/'),
+                method: 'GET',
+                rejectUnauthorized: false,
+                headers: { 'Authorization': 'Basic ' + auth, 'Host': baseUrl.hostname }
+            };
+            if (req.headers.range) options.headers['Range'] = req.headers.range;
+            const proxyReq = httpMod.request(options, (proxyRes) => {
+                res.status(proxyRes.statusCode);
+                if (proxyRes.headers['content-type']) res.set('Content-Type', proxyRes.headers['content-type']);
+                if (proxyRes.headers['content-length']) res.set('Content-Length', proxyRes.headers['content-length']);
+                if (proxyRes.headers['content-range']) res.set('Content-Range', proxyRes.headers['content-range']);
+                if (proxyRes.headers['accept-ranges']) res.set('Accept-Ranges', proxyRes.headers['accept-ranges']);
+                proxyRes.pipe(res);
+            });
+            proxyReq.on('error', (e) => { console.error('Stream error:', e.message); res.status(500).end(); });
+            proxyReq.setTimeout(60000, () => { proxyReq.destroy(); res.status(504).end(); });
+            proxyReq.end();
+        } catch(e) { console.error('Stream error:', e); res.status(500).end(); }
+    })();
+});
+
+// Extract cover from WebDAV file (read up to 2MB of header)
+app.get('/api/webdav/cover', async (req, res) => {
+    try {
+        const { session, path: filePath } = req.query;
+        const decodedPath = decodeURIComponent(filePath || '');
+        const encodedPath = decodedPath.split('/').map(function(seg) { return encodeURIComponent(seg); }).join('/');
+        const result = await makeWebdavRequest(session, 'GET', encodedPath, null, { 'Range': 'bytes=0-2097151' });
+        if (result.status >= 400) { res.status(404).end(); return; }
+        var buffer = Buffer.from(result.body);
+        var meta;
+        // Determine mime from extension
+        var ext = (filePath || '').split('.').pop().toLowerCase();
+        var mimeMap = { mp3: 'audio/mpeg', flac: 'audio/flac', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac', wma: 'audio/x-ms-wma', opus: 'audio/opus', webm: 'audio/webm' };
+        var mime = mimeMap[ext] || '';
+        try {
+            meta = await parseBuffer(buffer, mime ? { mimeType: mime } : {});
+        } catch(e) {
+            try { meta = await parseBuffer(buffer); } catch(e2) {
+                var tmpPath = require('path').join(require('os').tmpdir(), 'webdav-cover-' + Date.now() + '.' + ext);
+                require('fs').writeFileSync(tmpPath, buffer);
+                try { meta = await parseFile(tmpPath); } catch(e3) { meta = null; }
+                try { require('fs').unlinkSync(tmpPath); } catch(e4) {}
+            }
+        }
+        if (meta && meta.common.picture && meta.common.picture.length > 0) {
+            const pic = meta.common.picture[0];
+            res.set('Content-Type', pic.format || 'image/jpeg');
+            res.send(Buffer.from(pic.data));
+        } else {
+            res.status(404).end();
+        }
+    } catch (e) { res.status(404).end(); }
+});
 // Cache: filePath -> { meta, coverBuffer, coverFormat }
 const metaCache = new Map();
 
@@ -192,6 +389,29 @@ app.get('/api/cover', async (req, res) => {
     } catch (e) {
         res.status(404).end();
     }
+});
+
+// Fonts
+const FONTS_DIR = path.join(__dirname, 'fonts');
+if (!fs.existsSync(FONTS_DIR)) fs.mkdirSync(FONTS_DIR, { recursive: true });
+app.use('/fonts', express.static(FONTS_DIR));
+
+app.get('/api/fonts', (req, res) => {
+    try {
+        res.json(fs.readdirSync(FONTS_DIR).filter(function(f) { return /\.(ttf|otf|woff|woff2)$/i.test(f); }));
+    } catch(e) { res.json([]); }
+});
+
+const multer = require('multer');
+app.post('/api/fonts/upload', multer({
+    storage: multer.diskStorage({
+        destination: FONTS_DIR,
+        filename: function(req, file, cb) { cb(null, Buffer.from(file.originalname, 'latin1').toString('utf8')); }
+    }),
+    limits: { fileSize: 20 * 1024 * 1024 }
+}).single('font'), function(req, res) {
+    if (!req.file) { res.status(400).json({ error: 'No file' }); return; }
+    res.json({ name: req.file.filename });
 });
 
 app.listen(PORT, '::', () => {
