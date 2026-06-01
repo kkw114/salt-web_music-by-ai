@@ -20,13 +20,103 @@ const App = (() => {
     }
 
     function init() {
+        var debugEl = document.getElementById('debug-log');
+        // Auto-clear previous log
+        if (debugEl) debugEl.textContent = '';
+        var debugSwitch = document.getElementById('debug-switch');
+        var debugOn = false;
+        if (debugSwitch) {
+            debugSwitch.addEventListener('change', function() {
+                debugOn = this.checked;
+                if (debugOn && debugEl) debugEl.style.display = 'block';
+                else if (debugEl) debugEl.style.display = 'none';
+                // Sync settings panel debug switch
+                var dss = document.getElementById('debug-switch-settings');
+                if (dss) dss.checked = this.checked;
+            });
+        }
+        // Also sync from settings panel
+        var dss2 = document.getElementById('debug-switch-settings');
+        if (dss2) {
+            dss2.addEventListener('change', function() {
+                debugOn = this.checked;
+                if (debugOn && debugEl) debugEl.style.display = 'block';
+                else if (debugEl) debugEl.style.display = 'none';
+                if (debugSwitch) debugSwitch.checked = this.checked;
+            });
+        }
+        function debug(msg) {
+            console.log('[init]', msg);
+            if (debugOn && debugEl) {
+                debugEl.textContent += '[' + new Date().toLocaleTimeString() + '] ' + msg + '\n';
+                debugEl.scrollTop = debugEl.scrollHeight;
+            }
+        }
+        // Toggle debug panel visibility
+        function toggleDebugPanel(show) {
+            var panel = document.getElementById('debug-log-panel');
+            if (panel) panel.style.display = show ? 'block' : 'none';
+        }
+        if (debugSwitch) {
+            debugSwitch.addEventListener('change', function() {
+                debugOn = this.checked;
+                toggleDebugPanel(this.checked);
+                var dss = document.getElementById('debug-switch-settings');
+                if (dss) dss.checked = this.checked;
+            });
+        }
+        // Drag functionality
+        var debugHeader = document.getElementById('debug-log-header');
+        if (debugHeader) {
+            var dragX = 0, dragY = 0, dragging = false;
+            debugHeader.addEventListener('mousedown', function(e) {
+                dragging = true;
+                var panel = document.getElementById('debug-log-panel');
+                dragX = e.clientX - panel.offsetLeft;
+                dragY = e.clientY - panel.offsetTop;
+                e.preventDefault();
+            });
+            document.addEventListener('mousemove', function(e) {
+                if (!dragging) return;
+                var panel = document.getElementById('debug-log-panel');
+                panel.style.left = (e.clientX - dragX) + 'px';
+                panel.style.top = (e.clientY - dragY) + 'px';
+                panel.style.right = 'auto';
+                panel.style.bottom = 'auto';
+            });
+            document.addEventListener('mouseup', function() { dragging = false; });
+        }
+        // Clear button
+        var clearBtn = document.getElementById('debug-clear-btn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', function() {
+                var log = document.getElementById('debug-log');
+                if (log) log.textContent = '';
+            });
+        }
+        // Copy button
+        var copyBtn = document.getElementById('debug-copy-btn');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', function() {
+                var log = document.getElementById('debug-log');
+                if (log) {
+                    navigator.clipboard.writeText(log.textContent).catch(function() {});
+                    copyBtn.textContent = '✓';
+                    setTimeout(function() { copyBtn.textContent = '📋'; }, 1000);
+                }
+            });
+        }
         try {
+            debug('UI.init...');
             UI.init();
+            debug('initSettingsEvents...');
             UI.initSettingsEvents();
+            debug('initSourceEvents...');
             UI.initSourceEvents();
             UI.updatePlaymodeUI(PlaylistManager.getPlaymode());
             UI.showLyricsPanel();
             UI.initVolumeUI();
+            debug('bindEvents...');
             bindEvents();
             bindKeyboardShortcuts();
             // Restore playback settings
@@ -35,13 +125,46 @@ const App = (() => {
             var savedRate = Settings.get('rate') || 1;
             AudioEngine.setRate(savedRate);
             document.getElementById('btn-speed').textContent = fmtRate(savedRate);
-        } catch(e) { console.error('App init error:', e); }
+            // Auto-restore font
+            var savedFont = Settings.get('customFontFamily');
+            if (savedFont) {
+                fetch('/api/fonts').then(function(r) { return r.json(); }).then(function(fonts) {
+                    var found = null;
+                    for (var i = 0; i < fonts.length; i++) {
+                        if (fonts[i].replace(/\.[^.]+$/, '') === savedFont) { found = fonts[i]; break; }
+                    }
+                    if (found) {
+                        var ext = found.split('.').pop().toLowerCase();
+                        var fmt = ext === 'ttf' ? 'truetype' : ext === 'otf' ? 'opentype' : ext === 'woff2' ? 'woff2' : 'woff';
+                        var style = document.getElementById('custom-font-style');
+                        if (!style) { style = document.createElement('style'); style.id = 'custom-font-style'; document.head.appendChild(style); }
+                        style.textContent = '@font-face { font-family: "' + savedFont + '"; src: url("/fonts/' + found + '") format("' + fmt + '"); }';
+                        document.body.classList.add('rnp-custom-font');
+                        document.documentElement.style.setProperty('--rnp-custom-font-family', '"' + savedFont + '", "Inter", sans-serif');
+                    }
+                });
+            }
+            // Restore per-element font variables
+            var perFonts = { lyricFontFamily: '--font-lyric', transFontFamily: '--font-trans', titleFontFamily: '--font-title', artistFontFamily: '--font-artist' };
+            for (var pfk in perFonts) {
+                if (perFonts.hasOwnProperty(pfk)) {
+                    var pfv = Settings.get(pfk);
+                    if (pfv) {
+                        document.documentElement.style.setProperty(perFonts[pfk], '"' + pfv + '", "Inter", sans-serif');
+                    }
+                }
+            }
+            debug('loadWebdavSavedList...');
+            loadWebdavSavedList();
+            debug('init done');
+        } catch(e) { debug('ERROR: ' + e.message); console.error('App init error:', e); }
 
         sourceMode = 'default';
         var lastSrc = Settings.get('lastSource') || 'default';
         var lastSub = Settings.get('lastSubfolder') || '';
         var lastIdx = Settings.get('lastTrackIndex');
-        if (lastSrc === 'default' && lastSub) {
+        debug('lastSrc=' + lastSrc + ' lastSub=' + lastSub + ' lastIdx=' + lastIdx);
+        if (lastSrc === 'default' && lastSub && lastSub.charAt(0) !== '/') {
             currentSubfolder = lastSub;
             currentLabel = lastSub || 'testmusic';
         } else {
@@ -50,16 +173,18 @@ const App = (() => {
         }
         UI.updateSourceLabel(currentLabel);
         var _restoreSub = currentSubfolder;
+        debug('loadFromServer, sub=' + currentSubfolder);
         loadFromServer().then(function() {
+            debug('server loaded, tracks=' + PlaylistManager.length);
             if (lastSrc === 'default' && lastIdx >= 0 && lastIdx < PlaylistManager.length) {
                 PlaylistManager.setCurrentIndexSilent(lastIdx);
             }
             fetch('/api/folders').then(function(r) { return r.json(); }).then(function(d) {
                 UI.renderSourceFolders(d.subfolders, d.totalCount, _restoreSub);
             });
-        });
-        // Always restore local folder in background, switch to it if last source was local
+        }).catch(function(e) { debug('server load FAILED: ' + (e && e.message)); });
         tryRestoreLocalFolder();
+        if (lastSrc === 'webdav') { debug('tryRestoreWebdav...'); tryRestoreWebdav(); }
     }
 
     function bindEvents() {
@@ -212,15 +337,24 @@ const App = (() => {
 
     async function loadFromServer() {
         try {
-            UI.els.folderName.textContent = '加载中...';
             var url = '/api/files';
             if (currentSubfolder) url += '?sub=' + encodeURIComponent(currentSubfolder);
             var resp = await fetch(url);
             var data = await resp.json();
+            var dEl2 = document.getElementById('debug-log');
+            if (dEl2 && dEl2.style.display !== 'none') {
+                dEl2.textContent += '[loadFromServer] ' + url + ' -> ' + (Array.isArray(data) ? data.length + ' tracks' : typeof data) + '\n';
+            }
             if (!Array.isArray(data) || !data.length) { UI.els.folderName.textContent = '未找到音乐文件'; return; }
             populateTracks(data);
             UI.els.folderName.textContent = currentSubfolder || 'testmusic';
-        } catch(e) { console.error('Load error:', e); UI.els.folderName.textContent = '加载失败'; }
+        } catch(e) {
+            var dEl4 = document.getElementById('debug-log');
+            if (dEl4 && dEl4.style.display !== 'none') {
+                dEl4.textContent += '[loadFromServer] ERROR: ' + e.message + '\n';
+            }
+            console.error('Load error:', e); UI.els.folderName.textContent = '加载失败';
+        }
     }
 
     function getSortGroup(s) {
@@ -231,6 +365,10 @@ const App = (() => {
     }
 
     function populateTracks(data) {
+        var dEl = document.getElementById('debug-log');
+        if (dEl && dEl.style.display !== 'none') {
+            dEl.textContent += '[populateTracks] ' + data.length + ' tracks\n';
+        }
         lrcFileMap = {};
         firstLoad = !AudioEngine.getIsPlaying();
         for (var i = 0; i < data.length; i++) {
@@ -250,6 +388,39 @@ const App = (() => {
         UI.showPlayer();
         UI.renderPlaylist(data, -1);
         PlaylistManager.setCurrentIndexSilent(0);
+    }
+
+    function tryRestoreWebdav() {
+        var activeUrl = Settings.get('lastWebdavUrl') || '';
+        if (!activeUrl) return;
+        var list = Settings.get('webdavConnections') || [];
+        var lastSub = Settings.get('lastSubfolder') || '';
+        var lastIdx = Settings.get('lastTrackIndex');
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].url === activeUrl) {
+                doWebdavConnect(list[i].url, list[i].username, list[i].password, list[i].name).then(function(ok) {
+                    if (!ok) return;
+                    UI.updateSourceTab('webdav');
+                    // Poll for webdavRootData to be set (root load complete)
+                    var poll = setInterval(function() {
+                        if (webdavRootData && webdavRootData.subfolders) {
+                            clearInterval(poll);
+                            // Restore subfolder highlight
+                            if (lastSub && lastSub !== webdavBasePath()) {
+                                currentSubfolder = lastSub;
+                                loadWebdavFolder(lastSub);
+                            }
+                            // Restore track index
+                            if (lastIdx >= 0 && lastIdx < PlaylistManager.length) {
+                                PlaylistManager.setCurrentIndexSilent(lastIdx);
+                            }
+                        }
+                    }, 200);
+                    setTimeout(function() { clearInterval(poll); }, 30000);
+                });
+                return;
+            }
+        }
     }
 
     // ========== Local Folder Mode ==========
@@ -529,11 +700,24 @@ const App = (() => {
         }
         await Promise.all(workers);
 
+        // Sort tracks by name for consistent display order
+        tracks.sort(function(a, b) {
+            var an = String(a.title || (a.file ? a.file.name : ''));
+            var bn = String(b.title || (b.file ? b.file.name : ''));
+            var ca = getSortGroup(an), cb = getSortGroup(bn);
+            if (ca !== cb) return ca - cb;
+            return an.localeCompare(bn, 'zh-CN');
+        });
+
         for (var i = 0; i < lf.length; i++) {
             var l = lf[i], lb = l.name.replace(/\.lrc$/i, '').toLowerCase();
             for (var j = 0; j < tracks.length; j++) {
                 if (tracks[j] && tracks[j].file.name.replace(/\.[^.]+$/, '').toLowerCase() === lb) { lrcFileMap[tracks[j].file.name] = l; break; }
             }
+        }
+        var dEl6 = document.getElementById('debug-log');
+        if (dEl6 && dEl6.style.display !== 'none') {
+            dEl6.textContent += '[local] lrcFiles=' + lf.length + ' matched=' + Object.keys(lrcFileMap).length + ' tracks=' + tracks.length + '\n';
         }
         // Save metadata into cache for instant switching back
         cached.tracks = tracks;
@@ -616,6 +800,14 @@ const App = (() => {
         var workers = [];
         for (var w = 0; w < Math.min(concurrency, af.length); w++) workers.push(processOne());
         await Promise.all(workers);
+        // Sort tracks
+        tracks.sort(function(a, b) {
+            var an = String(a.title || (a.file ? a.file.name : ''));
+            var bn = String(b.title || (b.file ? b.file.name : ''));
+            var ca = getSortGroup(an), cb = getSortGroup(bn);
+            if (ca !== cb) return ca - cb;
+            return an.localeCompare(bn, 'zh-CN');
+        });
         // Match LRC files
         var lf = cached.lrcs || [];
         var lrcMap = {};
@@ -681,6 +873,343 @@ const App = (() => {
         container.appendChild(btn);
     }
 
+    // ========== WebDAV Mode ==========
+
+    var webdavSessionId = null;
+
+    function loadWebdavSavedList() {
+        var list = Settings.get('webdavConnections') || [];
+        var container = document.getElementById('webdav-saved-list');
+        if (!container) return;
+        container.innerHTML = '';
+        var countEl = document.getElementById('webdav-user-count');
+        if (countEl) countEl.textContent = list.length;
+        var activeUrl = Settings.get('lastWebdavUrl') || '';
+
+        for (var i = 0; i < list.length; i++) {
+            (function(idx) {
+                var conn = list[idx];
+                var item = document.createElement('div');
+                item.className = 'webdav-saved-item' + (conn.url === activeUrl ? ' active-user' : '');
+                var hostName = conn.url.replace(/https?:\/\//, '').split('/')[0];
+                item.innerHTML =
+                    '<div class="webdav-saved-item-header">' +
+                        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' +
+                        '<span class="webdav-saved-item-name">' + (conn.name || hostName) + '</span>' +
+                        '<span class="webdav-saved-item-url">' + hostName + '</span>' +
+                        '<div class="webdav-saved-item-actions">' +
+                            '<button class="btn-edit" title="编辑">✎</button>' +
+                            '<button class="btn-delete" title="删除">✕</button>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="webdav-saved-item-detail">' +
+                        '<label>备注名</label><input class="edit-name" value="' + (conn.name || '') + '" placeholder="选填"/>' +
+                        '<label>连接地址</label><input class="edit-url" value="' + conn.url + '" placeholder="例: https://127.0.0.1:233/dav/..."/>' +
+                        '<label>用户名</label><input class="edit-user" value="' + conn.username + '" placeholder="用户名"/>' +
+                        '<label>密码</label><input class="edit-pass" type="password" value="' + conn.password + '" placeholder="密码"/>' +
+                        '<button class="webdav-detail-btn">保存并连接</button>' +
+                    '</div>';
+
+                // Click header → connect
+                item.querySelector('.webdav-saved-item-header').addEventListener('click', function(e) {
+                    if (e.target.tagName === 'BUTTON') return;
+                    doWebdavConnect(conn.url, conn.username, conn.password, conn.name);
+                });
+
+                // Edit button → expand
+                item.querySelector('.btn-edit').addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    item.classList.toggle('expanded');
+                });
+
+                // Save and connect
+                item.querySelector('.webdav-detail-btn').addEventListener('click', function() {
+                    var newName = item.querySelector('.edit-name').value.trim();
+                    var newUrl = item.querySelector('.edit-url').value.trim();
+                    var newUser = item.querySelector('.edit-user').value.trim();
+                    var newPass = item.querySelector('.edit-pass').value.trim();
+                    list[idx] = { name: newName, url: newUrl, username: newUser, password: newPass };
+                    Settings.set('webdavConnections', list);
+                    doWebdavConnect(newUrl, newUser, newPass, newName);
+                    item.classList.remove('expanded');
+                    loadWebdavSavedList();
+                });
+
+                // Delete
+                item.querySelector('.btn-delete').addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    list.splice(idx, 1);
+                    Settings.set('webdavConnections', list);
+                    loadWebdavSavedList();
+                });
+
+                container.appendChild(item);
+            })(i);
+        }
+
+        // "添加用户" button at the bottom
+        var addBtn = document.createElement('div');
+        addBtn.className = 'webdav-add-user';
+        addBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> 添加用户';
+        addBtn.addEventListener('click', function() {
+            // Add empty user, expand it immediately
+            list.unshift({ name: '', url: '', username: '', password: '' });
+            Settings.set('webdavConnections', list);
+            loadWebdavSavedList();
+            // Expand the first item
+            var first = container.querySelector('.webdav-saved-item');
+            if (first) first.classList.add('expanded');
+        });
+        container.appendChild(addBtn);
+    }
+
+    async function doWebdavConnect(url, username, password, name) {
+        if (!url) { alert('请输入 WebDAV 地址'); return false; }
+        try {
+            var resp = await fetch('/api/webdav/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: url, username: username, password: password })
+            });
+            var data = await resp.json();
+            if (data.sessionId) {
+                webdavSessionId = data.sessionId;
+                sourceMode = 'webdav';
+                currentSubfolder = '';
+                webdavRootData = null;
+                UI.updateSourceTab('webdav');
+                var label = name || url.replace(/https?:\/\//, '').split('/')[0];
+                UI.updateSourceLabel(label);
+                Settings.set('lastSource', 'webdav');
+                Settings.set('lastWebdavUrl', url);
+                saveWebdavConnection(url, username, password, name);
+                loadWebdavSavedList();
+                loadWebdavFolder('');
+                return true;
+            } else {
+                alert(data.error || '连接失败');
+                return false;
+            }
+        } catch(e) { alert('连接失败: ' + e.message); return false; }
+    }
+
+    function saveWebdavConnection(url, username, password, name) {
+        var list = Settings.get('webdavConnections') || [];
+        var host = url.replace(/https?:\/\//, '').split('/')[0];
+        // Check if already exists, update it
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].url === url && list[i].username === username) {
+                list[i].password = password;
+                list[i].name = name || list[i].name;
+                Settings.set('webdavConnections', list);
+                return;
+            }
+        }
+        list.unshift({ name: name || host, url: url, username: username, password: password });
+        Settings.set('webdavConnections', list);
+    }
+
+    window.connectWebDAV = async function() {
+        var nameEl = document.getElementById('webdav-name');
+        var urlEl = document.getElementById('webdav-url');
+        var userEl = document.getElementById('webdav-user');
+        var passEl = document.getElementById('webdav-pass');
+        var name = (nameEl ? nameEl.value : '').trim();
+        var url = (urlEl.value || '').trim();
+        var user = (userEl.value || '').trim();
+        var pass = (passEl.value || '').trim();
+        var ok = await doWebdavConnect(url, user, pass, name);
+        if (ok) {
+            // Collapse form and clear inputs
+            var body = document.getElementById('webdav-config-body');
+            if (body) body.classList.add('hidden');
+            if (nameEl) nameEl.value = '';
+            urlEl.value = '';
+            userEl.value = '';
+            passEl.value = '';
+            loadWebdavSavedList();
+        }
+    };
+
+    var webdavRootData = null; // { subfolders: [], rootAudio: [], rootLrc: [] }
+
+    function webdavBasePath() {
+        var activeUrl = Settings.get('lastWebdavUrl') || '';
+        try {
+            // Encode non-ASCII first, then parse
+            var encoded = activeUrl.replace(/[^\x00-\x7F]+/g, function(m) { return encodeURIComponent(m); });
+            var u = new URL(encoded);
+            return decodeURIComponent(u.pathname).replace(/\/$/, '');
+        } catch(e) { return ''; }
+    }
+
+    async function loadWebdavFolder(folderPath) {
+        UI.els.folderName.textContent = '加载中...';
+        try {
+            // If clicking a subfolder (not root), load only that folder's tracks
+            if (folderPath && folderPath !== '' && webdavRootData) {
+                var resp = await fetch('/api/webdav/list?session=' + encodeURIComponent(webdavSessionId) + '&path=' + encodeURIComponent(folderPath));
+                var entries = await resp.json();
+                if (!Array.isArray(entries)) { UI.els.folderName.textContent = '加载失败'; return; }
+                var af = entries.filter(function(e) { return !e.isDir && MetadataReader.isAudioFile(e.name); });
+                var lf = entries.filter(function(e) { return !e.isDir && MetadataReader.isLRCFile(e.name); });
+                // Highlight clicked subfolder
+                var container = document.getElementById('webdav-folder-list');
+                if (container) {
+                    var items = container.querySelectorAll('.source-folder-item');
+                    for (var k = 0; k < items.length; k++) { items[k].classList.remove('active'); }
+                    for (var k2 = 0; k2 < items.length; k2++) {
+                        var dp = items[k2].getAttribute('data-path');
+                        if (dp === folderPath || (dp && folderPath && dp.replace(/\/$/, '') === folderPath.replace(/\/$/, ''))) {
+                            items[k2].classList.add('active');
+                            break;
+                        }
+                    }
+                }
+                loadWebdavTracks(folderPath, af, lf);
+                return;
+            }
+
+            // Root load: PROPFIND root
+            resp = await fetch('/api/webdav/list?session=' + encodeURIComponent(webdavSessionId) + '&path=' + encodeURIComponent(folderPath || ''));
+            entries = await resp.json();
+            if (!Array.isArray(entries)) { UI.els.folderName.textContent = '加载失败'; return; }
+
+            var subfolders = entries.filter(function(e) { return e.isDir; });
+            var rootAudio = entries.filter(function(e) { return !e.isDir && MetadataReader.isAudioFile(e.name); });
+            var rootLrc = entries.filter(function(e) { return !e.isDir && MetadataReader.isLRCFile(e.name); });
+            // Filter out the root directory itself - try both encoded and decoded paths
+            var base = webdavBasePath();
+            subfolders = subfolders.filter(function(e) {
+                var ep = e.href.replace(/\/$/, '');
+                if (ep === base) return false;
+                // Also check if the last segment matches the current folder being queried
+                if (folderPath && ep === (folderPath.replace(/\/$/, ''))) return false;
+                return true;
+            });
+            webdavRootData = { subfolders: subfolders, rootAudio: rootAudio, rootLrc: rootLrc, folderPath: folderPath || '' };
+
+            // Render subfolder list
+            var container = document.getElementById('webdav-folder-list');
+            container.innerHTML = '';
+            container.classList.remove('hidden');
+
+            // Calculate total songs: root + subfolder counts (we don't know subfolder counts yet, show root)
+            var totalSongs = rootAudio.length;
+
+            // "全部歌曲" item
+            var allItem = document.createElement('div');
+            allItem.className = 'source-folder-item active';
+            allItem.setAttribute('data-path', '');
+            allItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>全部歌曲</span><span class="source-folder-count">' + totalSongs + '</span>';
+            allItem.addEventListener('click', function() {
+                container.querySelectorAll('.source-folder-item').forEach(function(el) { el.classList.remove('active'); });
+                allItem.classList.add('active');
+                Settings.set('lastSubfolder', '');
+                loadWebdavAllTracks();
+            });
+            container.appendChild(allItem);
+
+            // Subfolders
+            for (var i = 0; i < subfolders.length; i++) {
+                var sf = subfolders[i];
+                (function(fpath, fname) {
+                    var item = document.createElement('div');
+                    item.className = 'source-folder-item';
+                    item.setAttribute('data-path', fpath);
+                    item.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>' + (fname || '未知') + '</span><span class="source-folder-count">-</span>';
+                    item.addEventListener('click', function() {
+                        currentSubfolder = fpath;
+                        Settings.set('lastSubfolder', fpath);
+                        loadWebdavFolder(fpath);
+                    });
+                    container.appendChild(item);
+                })(sf.href, sf.name);
+            }
+
+            // Load all tracks (root + subfolders)
+            loadWebdavAllTracks();
+        } catch(e) { UI.els.folderName.textContent = '加载失败'; }
+    }
+
+    async function loadWebdavAllTracks() {
+        if (!webdavRootData) return;
+        var allAudio = webdavRootData.rootAudio.slice();
+        var allLrc = webdavRootData.rootLrc.slice();
+        var subCounts = [];
+        // Load tracks from all subfolders
+        for (var i = 0; i < webdavRootData.subfolders.length; i++) {
+            try {
+                var resp = await fetch('/api/webdav/list?session=' + encodeURIComponent(webdavSessionId) + '&path=' + encodeURIComponent(webdavRootData.subfolders[i].href));
+                var entries = await resp.json();
+                if (Array.isArray(entries)) {
+                    var af = entries.filter(function(e) { return !e.isDir && MetadataReader.isAudioFile(e.name); });
+                    var lf = entries.filter(function(e) { return !e.isDir && MetadataReader.isLRCFile(e.name); });
+                    allAudio.push.apply(allAudio, af);
+                    allLrc.push.apply(allLrc, lf);
+                    subCounts[i] = af.length;
+                }
+            } catch(e) { subCounts[i] = 0; }
+        }
+        UI.els.folderName.textContent = webdavRootData.folderPath || 'WebDAV';
+        // Update subfolder counts in DOM
+        var items = document.querySelectorAll('#webdav-folder-list .source-folder-item');
+        var subIdx = 0;
+        for (var j = 0; j < items.length; j++) {
+            var countSpan = items[j].querySelector('.source-folder-count');
+            if (!countSpan) continue;
+            if (items[j].getAttribute('data-path') === '') {
+                // "全部歌曲" item
+                countSpan.textContent = allAudio.length;
+            } else if (subIdx < subCounts.length) {
+                countSpan.textContent = subCounts[subIdx];
+                subIdx++;
+            }
+        }
+        loadWebdavTracks('', allAudio, allLrc);
+    }
+
+    function loadWebdavTracks(folderPath, audioFiles, lrcFiles) {
+        var base = window.location.origin;
+        var tracks = audioFiles.map(function(f) {
+            var streamUrl = base + '/api/webdav/stream?session=' + encodeURIComponent(webdavSessionId) + '&path=' + encodeURIComponent(f.href);
+            var coverUrl = base + '/api/webdav/cover?session=' + encodeURIComponent(webdavSessionId) + '&path=' + encodeURIComponent(f.href);
+            var title = MetadataReader.cleanFilename(f.name);
+            var artist = '';
+            var idx = title.indexOf(' - ');
+            if (idx > 0) { artist = title.substring(0, idx); title = title.substring(idx + 3); }
+            return { title: title, artist: artist, album: '', coverUrl: coverUrl, hasCover: true, track: '', year: '', genre: '', url: streamUrl, name: f.name };
+        });
+
+        lrcFileMap = {};
+        for (var i = 0; i < lrcFiles.length; i++) {
+            var lrcUrl = base + '/api/webdav/stream?session=' + encodeURIComponent(webdavSessionId) + '&path=' + encodeURIComponent(lrcFiles[i].href);
+            var lb = lrcFiles[i].name.replace(/\.lrc$/i, '').toLowerCase();
+            for (var j = 0; j < tracks.length; j++) {
+                if ((tracks[j].name || '').replace(/\.[^.]+$/, '').toLowerCase() === lb) {
+                    lrcFileMap[tracks[j].name] = lrcUrl;
+                    break;
+                }
+            }
+        }
+
+        // Sort tracks by name for consistent order
+        tracks.sort(function(a, b) {
+            var an = String(a.title || a.name || '');
+            var bn = String(b.title || b.name || '');
+            var ca = getSortGroup(an), cb = getSortGroup(bn);
+            if (ca !== cb) return ca - cb;
+            return an.localeCompare(bn, 'zh-CN');
+        });
+
+        firstLoad = true;
+        PlaylistManager.setTracks(tracks);
+        UI.showPlayer();
+        UI.els.folderName.textContent = folderPath || 'WebDAV';
+        UI.renderPlaylist(tracks, -1);
+        PlaylistManager.setCurrentIndexSilent(0);
+    }
+
     // ========== Track Loading ==========
 
     function loadAndPlayTrack(track) {
@@ -690,6 +1219,7 @@ const App = (() => {
         LyricsEngine.reset();
         var lrcRef = null;
         if (sourceMode === 'local') lrcRef = lrcFileMap[track.file ? track.file.name : track.name];
+        else if (sourceMode === 'webdav') lrcRef = lrcFileMap[track.name];
         else lrcRef = lrcFileMap[track.name];
         if (lrcRef) {
             if (lrcRef instanceof File) lrcRef.text().then(function(t) { LyricsEngine.setLyrics(LyricsEngine.parseLRC(t).lyrics); }).catch(function() {});
@@ -724,6 +1254,7 @@ const App = (() => {
         setSourceMode: setSourceMode,
         selectSubfolder: selectSubfolder,
         openLocalFolder: openLocalFolder,
+        loadWebdavSavedList: loadWebdavSavedList,
         get sourceMode() { return sourceMode; },
         get currentSubfolder() { return currentSubfolder; }
     };

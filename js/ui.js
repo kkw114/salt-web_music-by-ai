@@ -111,8 +111,8 @@ const UI = (() => {
 
     // Show player, hide welcome
     function showPlayer() {
-        els.welcomeScreen.classList.add('hidden');
-        els.playerContainer.classList.remove('hidden');
+        if (els.welcomeScreen) els.welcomeScreen.classList.add('hidden');
+        if (els.playerContainer) els.playerContainer.classList.remove('hidden');
     }
 
     function showWelcome() {
@@ -313,17 +313,19 @@ const UI = (() => {
 
     // Render playlist
     var playlistTracks = [];
+    var playlistOrigTracks = [];
     var playlistCurrentIndex = -1;
 
     function getSortGroup(s) {
         var c = s.charAt(0);
         if (/[a-zA-Z]/.test(c)) return 0;
         if (/[0-9]/.test(c)) return 1;
-        return 0; // Chinese sorts with A-Z by pinyin
+        return 0;
     }
 
     function renderPlaylist(tracks, currentIndex) {
-        playlistTracks = (tracks || []).slice().sort(function(a, b) {
+        playlistOrigTracks = tracks || [];
+        playlistTracks = playlistOrigTracks.slice().sort(function(a, b) {
             var an = String(a.title || a.name || '');
             var bn = String(b.title || b.name || '');
             var ca = getSortGroup(an), cb = getSortGroup(bn);
@@ -337,6 +339,10 @@ const UI = (() => {
             if (!label || label === 'testmusic') label = '全部歌曲';
         }
         els.playlistCount.textContent = label + ' · ' + playlistTracks.length + ' 首';
+        var dEl3 = document.getElementById('debug-log');
+        if (dEl3 && dEl3.style.display !== 'none') {
+            dEl3.textContent += '[renderPlaylist] sorted: ' + playlistTracks.length + ' origLen=' + playlistOrigTracks.length + '\n';
+        }
         renderPlaylistItems();
         renderPlaylistIndex();
     }
@@ -357,11 +363,16 @@ const UI = (() => {
                     '<div class="playlist-item-title">' + escapeHtml(track.title || '未知曲目') + '</div>' +
                     '<div class="playlist-item-artist">' + escapeHtml(track.artist || '未知艺术家') + '</div>' +
                 '</div>';
-            (function(idx) {
+            (function(trackObj, displayIdx) {
                 item.addEventListener('click', function() {
-                    if (typeof App !== 'undefined') App.playTrack(idx);
+                    var origIdx = playlistOrigTracks.indexOf(trackObj);
+                    var dEl5 = document.getElementById('debug-log');
+                    if (dEl5 && dEl5.style.display !== 'none') {
+                        dEl5.textContent += '[click] display=' + displayIdx + ' orig=' + origIdx + ' title=' + (trackObj.title || '?').substring(0,20) + '\n';
+                    }
+                    if (origIdx >= 0 && typeof App !== 'undefined') App.playTrack(origIdx);
                 });
-            })(i);
+            })(track, i);
             els.playlistList.appendChild(item);
         }
         var activeItem = els.playlistList.querySelector('.playlist-item.active');
@@ -499,6 +510,13 @@ const UI = (() => {
                 if (typeof App !== 'undefined') App.openLocalFolder();
             });
         }
+        var webdavBarHeader = document.getElementById('webdav-user-bar-header');
+        if (webdavBarHeader) {
+            webdavBarHeader.addEventListener('click', function() {
+                document.getElementById('webdav-user-bar').classList.toggle('open');
+                document.getElementById('webdav-saved-list').classList.toggle('hidden');
+            });
+        }
     }
 
     function toggleSourcePanel(force) {
@@ -593,6 +611,7 @@ const UI = (() => {
         document.getElementById('source-tab-default').classList.toggle('hidden', mode !== 'default');
         document.getElementById('source-tab-webdav').classList.toggle('hidden', mode !== 'webdav');
         document.getElementById('source-tab-local').classList.toggle('hidden', mode !== 'local');
+        if (mode === 'webdav') { if (typeof App !== 'undefined' && App.loadWebdavSavedList) App.loadWebdavSavedList(); }
     }
 
     // ==================== Idle Detection ====================
@@ -705,6 +724,16 @@ const UI = (() => {
             Settings.applyCSSVariables();
             LyricsEngine.updateLayout();
         });
+
+        // Handle debug switch via event delegation
+        els.settingsContent.addEventListener('change', function(e) {
+            if (e.target && e.target.id === 'debug-switch-settings') {
+                var panel = document.getElementById('debug-log-panel');
+                if (panel) panel.style.display = e.target.checked ? 'block' : 'none';
+                var ws = document.getElementById('debug-switch');
+                if (ws) ws.checked = e.target.checked;
+            }
+        });
     }
 
     function renderSettingsPanel(tabName) {
@@ -727,7 +756,10 @@ const UI = (() => {
                 '<div class="settings-row"><span class="settings-label">快捷键梯度</span><input type="text" id="speed-step-input" class="settings-select" style="width:60px;text-align:center" value="' + s.get('speedStep') + '"></div>' +
                 '<div class="settings-sep"></div>' +
                 group('字体') +
-                customFontRow(s.get('customFontFamily'));
+                customFontRow(s.get('customFontFamily')) +
+                '<div class="settings-sep"></div>' +
+                group('调试') +
+                '<div class="settings-row"><span class="settings-label">调试日志</span><input type="checkbox" class="settings-checkbox" id="debug-switch-settings"></div>';
         }
 
         if (tabName === 'cover') {
@@ -794,25 +826,33 @@ const UI = (() => {
                 toggle('lyricFade', '淡出效果', s.get('lyricFade')) +
                 toggle('lyricZoom', '缩放效果', s.get('lyricZoom')) +
                 toggle('lyricBlur', '模糊效果', s.get('lyricBlur')) +
-                toggle('textGlow', '文字发光', s.get('textGlow')) +
-                toggle('textShadow', '文字阴影', s.get('textShadow')) +
                 toggle('showTranslation', '显示翻译', s.get('showTranslation')) +
-                '<div class="settings-sep"></div>' +
-                group('字号') +
-                slider('lyricFontSize', '歌词字号', 16, 56, s.get('lyricFontSize'), 'px') +
-                slider('lyricFontWeight', '歌词粗细', 100, 900, s.get('lyricFontWeight'), '');
-            if (s.get('showTranslation')) {
-                html += slider('transFontSize', '翻译字号', 10, 36, s.get('transFontSize'), 'px') +
-                    slider('transFontWeight', '翻译粗细', 100, 700, s.get('transFontWeight'), '');
-            }
-            html += slider('titleFontSize', '曲名字号', 14, 48, s.get('titleFontSize'), 'px') +
-                slider('titleFontWeight', '曲名粗细', 300, 900, s.get('titleFontWeight'), '') +
                 '<div class="settings-sep"></div>' + group('位置') +
                 slider('lyricAlignment', '歌词位置', 10, 90, s.get('lyricAlignment'), '%') +
-                slider('lyricLineSpacing', '行距', 2, 40, s.get('lyricLineSpacing'), 'px');
+                slider('lyricLineSpacing', '行距', 2, 40, s.get('lyricLineSpacing'), 'px') +
+                '<div class="settings-sep"></div>' +
+                // Parent collapsible: 文字效果
+                '<div class="elem-group"><div class="elem-group-header"><span>文字效果</span><svg class="elem-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="elem-group-body hidden">' +
+                elemSection('歌词原文', 'lyricOrig', s, 'lyricFontFamily', 'lyricFontSize', 'lyricFontWeight') +
+                '<div class="settings-sep"></div>' +
+                elemSection('歌词翻译', 'lyricTrans', s, 'transFontFamily', 'transFontSize', 'transFontWeight') +
+                '<div class="settings-sep"></div>' +
+                elemSection('曲名', 'trackTitle', s, 'titleFontFamily', 'titleFontSize', 'titleFontWeight') +
+                '<div class="settings-sep"></div>' +
+                elemSection('歌手/专辑', 'trackArtist', s, 'artistFontFamily', 'artistFontSize', 'artistFontWeight') +
+                '</div></div>';
         }
 
         els.settingsContent.innerHTML = html;
+        // Collapsible element groups
+        els.settingsContent.querySelectorAll('.elem-group-header, .elem-subgroup-header').forEach(function(h) {
+            h.addEventListener('click', function() {
+                var parent = this.parentElement;
+                parent.classList.toggle('open');
+                var body = parent.querySelector('.elem-group-body, .elem-subgroup-body');
+                if (body) body.classList.toggle('hidden');
+            });
+        });
         bindSettingsControls();
     }
 
@@ -832,6 +872,15 @@ const UI = (() => {
                 if (key === 'textShadow') {
                     document.body.classList.toggle('rnp-shadow', val);
                 }
+                // Per-element glow/shadow
+                if (key === 'lyricOrigGlow') document.body.classList.toggle('rnp-glow-lyric', val);
+                if (key === 'lyricOrigShadow') document.body.classList.toggle('rnp-shadow-lyric', val);
+                if (key === 'lyricTransGlow') document.body.classList.toggle('rnp-glow-trans', val);
+                if (key === 'lyricTransShadow') document.body.classList.toggle('rnp-shadow-trans', val);
+                if (key === 'trackTitleGlow') document.body.classList.toggle('rnp-glow-title', val);
+                if (key === 'trackTitleShadow') document.body.classList.toggle('rnp-shadow-title', val);
+                if (key === 'trackArtistGlow') document.body.classList.toggle('rnp-glow-artist', val);
+                if (key === 'trackArtistShadow') document.body.classList.toggle('rnp-shadow-artist', val);
                 if (key === 'coverBlurryShadow') {
                     if (!val) { els.albumGlow.style.display = 'none'; }
                     else { els.albumGlow.style.display = ''; }
@@ -932,49 +981,119 @@ const UI = (() => {
         });
 
         // Custom font
-        var fontInput = document.getElementById('custom-font-input');
+        var fontSelect = document.getElementById('custom-font-select');
         var fontFile = document.getElementById('custom-font-file');
-        var btnLoadFont = document.getElementById('btn-load-font');
-        var btnResetFont = document.getElementById('btn-reset-font');
+        var btnUploadFont = document.getElementById('btn-upload-font');
 
-        if (btnLoadFont) btnLoadFont.addEventListener('click', () => fontFile.click());
-        if (fontFile) fontFile.addEventListener('change', async () => {
-            var file = fontFile.files[0];
-            if (!file) return;
-            var fontName = file.name.replace(/\.[^.]+$/, '');
-            var reader = new FileReader();
-            reader.onload = () => {
-                var style = document.createElement('style');
-                style.id = 'custom-font-style';
-                style.textContent = `@font-face { font-family: "${fontName}"; src: url(${reader.result}) format("${file.name.endsWith('.ttf') ? 'truetype' : file.name.endsWith('.otf') ? 'opentype' : file.name.endsWith('.woff2') ? 'woff2' : 'woff'}"); }`;
-                var old = document.getElementById('custom-font-style');
-                if (old) old.remove();
-                document.head.appendChild(style);
-                Settings.set('customFontFamily', fontName);
-                if (fontInput) fontInput.value = fontName;
-                document.body.classList.add('rnp-custom-font');
-                document.documentElement.style.setProperty('--rnp-custom-font-family', `"${fontName}", sans-serif`);
-            };
-            reader.readAsDataURL(file);
-        });
-        if (fontInput) fontInput.addEventListener('input', () => {
-            var name = fontInput.value.trim();
-            Settings.set('customFontFamily', name);
-            if (name) {
-                document.body.classList.add('rnp-custom-font');
-                document.documentElement.style.setProperty('--rnp-custom-font-family', `"${name}", 'Inter', sans-serif`);
+        function loadFontList() {
+            fetch('/api/fonts').then(function(r) { return r.json(); }).then(function(fonts) {
+                var allSelects = document.querySelectorAll('.custom-font-select');
+                for (var s = 0; s < allSelects.length; s++) {
+                    var sel = allSelects[s];
+                    var cur = sel.value;
+                    var firstOpt = sel.querySelector('option[value=""]');
+                    sel.innerHTML = firstOpt ? firstOpt.outerHTML : '<option value="">默认</option>';
+                    for (var f = 0; f < fonts.length; f++) {
+                        var fn = fonts[f].replace(/\.[^.]+$/, '');
+                        var opt = '<option value="' + fn + '"' + (fn === cur ? ' selected' : '') + '>' + fn + '</option>';
+                        sel.innerHTML += opt;
+                    }
+                    if (cur) sel.value = cur;
+                }
+            });
+        }
+        setTimeout(loadFontList, 100);
+
+        // Handle all font selects (global + per-element)
+        if (els.settingsContent) {
+            els.settingsContent.addEventListener('change', function(e) {
+            var t = e.target;
+            if (!t.classList.contains('custom-font-select')) return;
+            var fontKey = t.getAttribute('data-font') || 'customFontFamily';
+            var name = t.value;
+            Settings.set(fontKey, name);
+            if (fontKey === 'customFontFamily') {
+                if (name) {
+                    applyFontByName(name);
+                } else {
+                    var s2 = document.getElementById('custom-font-style');
+                    if (s2) s2.remove();
+                    document.body.classList.remove('rnp-custom-font');
+                    document.documentElement.style.removeProperty('--rnp-custom-font-family');
+                }
             } else {
-                document.body.classList.remove('rnp-custom-font');
-                document.documentElement.style.removeProperty('--rnp-custom-font-family');
+                // Per-element font - set CSS variable
+                var varMap = { lyricFontFamily: '--font-lyric', transFontFamily: '--font-trans', titleFontFamily: '--font-title', artistFontFamily: '--font-artist' };
+                var cssVar = varMap[fontKey];
+                if (name) {
+                    document.documentElement.style.setProperty(cssVar, '"' + name + '", "Inter", sans-serif');
+                    applyFontByNameIfNeeded(name);
+                    var dEl = document.getElementById('debug-log');
+                    if (dEl && dEl.style.display !== 'none') dEl.textContent += '[font] set ' + cssVar + '=' + name + '\n';
+                } else {
+                    document.documentElement.style.removeProperty(cssVar);
+                }
             }
         });
-        if (btnResetFont) btnResetFont.addEventListener('click', () => {
-            Settings.set('customFontFamily', '');
-            var style = document.getElementById('custom-font-style');
-            if (style) style.remove();
-            document.body.classList.remove('rnp-custom-font');
-            document.documentElement.style.removeProperty('--rnp-custom-font-family');
-            renderSettingsPanel('appearance');
+        }
+
+        function applyFontByNameIfNeeded(fontName) {
+            var existing = document.getElementById('custom-font-' + fontName.toLowerCase().replace(/[^a-z0-9]/g, ''));
+            if (existing) return;
+            var dEl = document.getElementById('debug-log');
+            fetch('/api/fonts').then(function(r) { return r.json(); }).then(function(fonts) {
+                var found = null;
+                for (var i = 0; i < fonts.length; i++) {
+                    if (fonts[i].replace(/\.[^.]+$/, '') === fontName) { found = fonts[i]; break; }
+                }
+                if (dEl && dEl.style.display !== 'none') dEl.textContent += '[font-face] ' + fontName + ' found=' + (found || 'NO') + '\n';
+                if (!found) return;
+                var ext = found.split('.').pop().toLowerCase();
+                var fmt = ext === 'ttf' ? 'truetype' : ext === 'otf' ? 'opentype' : ext === 'woff2' ? 'woff2' : 'woff';
+                var s2 = document.createElement('style');
+                s2.id = 'custom-font-' + fontName.toLowerCase().replace(/[^a-z0-9]/g, '');
+                s2.textContent = '@font-face { font-family: "' + fontName + '"; src: url("/fonts/' + found + '") format("' + fmt + '"); }';
+                document.head.appendChild(s2);
+            });
+        }
+
+        function applyFontByName(fontName) {
+            fetch('/api/fonts').then(function(r) { return r.json(); }).then(function(fonts) {
+                var found = null;
+                for (var i = 0; i < fonts.length; i++) {
+                    if (fonts[i].replace(/\.[^.]+$/, '') === fontName) { found = fonts[i]; break; }
+                }
+                if (!found) return;
+                var ext = found.split('.').pop().toLowerCase();
+                var fmt = ext === 'ttf' ? 'truetype' : ext === 'otf' ? 'opentype' : ext === 'woff2' ? 'woff2' : 'woff';
+                var style = document.getElementById('custom-font-style');
+                if (!style) { style = document.createElement('style'); style.id = 'custom-font-style'; document.head.appendChild(style); }
+                style.textContent = '@font-face { font-family: "' + fontName + '"; src: url("/fonts/' + found + '") format("' + fmt + '"); }';
+                document.body.classList.add('rnp-custom-font');
+                document.documentElement.style.setProperty('--rnp-custom-font-family', '"' + fontName + '", "Inter", sans-serif');
+            });
+        }
+
+        if (btnUploadFont) btnUploadFont.addEventListener('click', function() { fontFile.click(); });
+        if (fontFile) fontFile.addEventListener('change', function() {
+            var file = fontFile.files[0];
+            if (!file) return;
+            var fd = new FormData();
+            fd.append('font', file);
+            fetch('/api/fonts/upload', { method: 'POST', body: fd }).then(function(r) { return r.json(); }).then(function(d) {
+                var name = (d.name || file.name).replace(/\.[^.]+$/, '');
+                var ext = (d.name || file.name).split('.').pop().toLowerCase();
+                var fmt = ext === 'ttf' ? 'truetype' : ext === 'otf' ? 'opentype' : ext === 'woff2' ? 'woff2' : 'woff';
+                var style = document.getElementById('custom-font-style');
+                if (!style) { style = document.createElement('style'); style.id = 'custom-font-style'; document.head.appendChild(style); }
+                style.textContent = '@font-face { font-family: "' + name + '"; src: url("/fonts/' + (d.name || file.name) + '") format("' + fmt + '"); }';
+                Settings.set('customFontFamily', name);
+                document.body.classList.add('rnp-custom-font');
+                document.documentElement.style.setProperty('--rnp-custom-font-family', '"' + name + '", "Inter", sans-serif');
+                loadFontList();
+                if (fontSelect) fontSelect.value = name;
+                fontFile.value = '';
+            }).catch(function() {});
         });
 
         // Speed step input (live update)
@@ -985,6 +1104,22 @@ const UI = (() => {
         });
     }
 
+    // HTML helpers
+    function elemSection(label, prefix, s, fontKey, sizeKey, weightKey) {
+        var glowKey = prefix + 'Glow';
+        var shadowKey = prefix + 'Shadow';
+        return '<div class="elem-subgroup">' +
+            '<div class="elem-subgroup-header" style="cursor:pointer"><span>' + label + '</span><svg class="elem-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div>' +
+            '<div class="elem-subgroup-body hidden">' +
+            slider(sizeKey, '字号', 10, 56, s.get(sizeKey), 'px') +
+            slider(weightKey, '粗细', 100, 900, s.get(weightKey), '') +
+            toggle(glowKey, '文字发光', s.get(glowKey)) +
+            toggle(shadowKey, '文字阴影', s.get(shadowKey)) +
+            '<div class="settings-row" style="flex-wrap:wrap;padding-top:4px"><span class="settings-label" style="flex:1 0 100%;margin-bottom:2px;font-size:11px;color:rgba(255,255,255,0.4)">字体</span>' +
+            '<select class="custom-font-select settings-select" data-font="' + fontKey + '" style="flex:1;font-size:11px"><option value="">跟随全局</option>' +
+            (s.get(fontKey) ? '<option value="' + s.get(fontKey) + '" selected>' + s.get(fontKey) + '</option>' : '') +
+            '</select></div></div></div>';
+    }
     // HTML helpers
     function group(title) {
         return `<div class="settings-group"><div class="settings-group-title">${title}</div>`;
@@ -1006,14 +1141,15 @@ const UI = (() => {
     }
 
     function customFontRow(currentFamily) {
-        return `<div class="settings-row" style="flex-wrap:wrap">
-            <span class="settings-label" style="flex:1 0 100%;margin-bottom:4px">自定义字体</span>
-            <input type="text" id="custom-font-input" class="settings-select" style="flex:1;font-size:11px"
-                placeholder="字体名称 (如 SimSun)" value="${currentFamily || ''}">
-            <button class="settings-select-btn" id="btn-load-font" style="margin-left:4px">上传</button>
-            <input type="file" id="custom-font-file" accept=".ttf,.otf,.woff,.woff2" style="display:none">
-            ${currentFamily ? `<button class="settings-select-btn" id="btn-reset-font" style="margin-left:2px">清除</button>` : ''}
-        </div>`;
+        return '<div class="settings-row" style="flex-wrap:wrap">' +
+            '<span class="settings-label" style="flex:1 0 100%;margin-bottom:4px">全局字体</span>' +
+            '<select id="custom-font-select" class="custom-font-select settings-select" style="flex:1;font-size:11px">' +
+                '<option value="">默认</option>' +
+                (currentFamily ? '<option value="' + currentFamily + '" selected>' + currentFamily + '</option>' : '') +
+            '</select>' +
+            '<button class="settings-select-btn" id="btn-upload-font" style="margin-left:4px">上传</button>' +
+            '<input type="file" id="custom-font-file" accept=".ttf,.otf,.woff,.woff2" style="display:none">' +
+        '</div>';
     }
 
     function escapeHtml(text) {

@@ -51,17 +51,35 @@ const Settings = (() => {
     lyricGlow: false,
     textShadow: false,
     customFontFamily: '',
+    lyricFontFamily: '',
+    transFontFamily: '',
+    titleFontFamily: '',
+    artistFontFamily: '',
     lyricLineSpacing: 8,
     titleFontSize: 22,
     titleFontWeight: 600,
+    artistFontSize: 16,
+    artistFontWeight: 400,
+
+    // Per-element glow/shadow
+    lyricOrigGlow: false,
+    lyricOrigShadow: false,
+    lyricTransGlow: false,
+    lyricTransShadow: false,
+    trackTitleGlow: false,
+    trackTitleShadow: false,
+    trackArtistGlow: false,
+    trackArtistShadow: false,
 
     // Playback
     volume: 80,
     rate: 1,
+    speedStep: 0.1,
     lastLocalFolder: '',
     lastSource: '',
     lastSubfolder: '',
     lastTrackIndex: -1,
+    webdavConnections: [],
   };
 
   let settings = {};
@@ -153,9 +171,17 @@ const Settings = (() => {
     b.classList.toggle('lyric-fade', get('lyricFade'));
     b.classList.toggle('lyric-zoom', get('lyricZoom'));
     b.classList.toggle('lyric-blur', get('lyricBlur'));
-    b.classList.toggle('rnp-text-glow', get('textGlow'));
-    b.classList.toggle('rnp-shadow', get('textShadow'));
     b.classList.toggle('rnp-lyric-glow', get('lyricGlow'));
+
+    // Per-element glow/shadow
+    b.classList.toggle('rnp-glow-lyric', get('lyricOrigGlow'));
+    b.classList.toggle('rnp-shadow-lyric', get('lyricOrigShadow'));
+    b.classList.toggle('rnp-glow-trans', get('lyricTransGlow'));
+    b.classList.toggle('rnp-shadow-trans', get('lyricTransShadow'));
+    b.classList.toggle('rnp-glow-title', get('trackTitleGlow'));
+    b.classList.toggle('rnp-shadow-title', get('trackTitleShadow'));
+    b.classList.toggle('rnp-glow-artist', get('trackArtistGlow'));
+    b.classList.toggle('rnp-shadow-artist', get('trackArtistShadow'));
 
     // Translation
     b.classList.toggle('rnp-show-translation', get('showTranslation'));
@@ -182,6 +208,8 @@ const Settings = (() => {
     root.style.setProperty('--lyric-line-spacing', `${get('lyricLineSpacing')}px`);
     root.style.setProperty('--title-font-size', `${get('titleFontSize')}px`);
     root.style.setProperty('--title-font-weight', get('titleFontWeight'));
+    root.style.setProperty('--artist-font-size', `${get('artistFontSize')}px`);
+    root.style.setProperty('--artist-font-weight', get('artistFontWeight'));
     var family = get('customFontFamily');
     if (family) {
       root.style.setProperty('--rnp-custom-font-family', family);
