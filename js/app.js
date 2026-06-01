@@ -288,13 +288,71 @@ const App = (() => {
     }
 
     async function openLocalFolder() {
-        if (!('showDirectoryPicker' in window)) { alert('此浏览器不支持文件夹选择（请使用 Chrome/Edge）'); return; }
+        if (!('showDirectoryPicker' in window)) {
+            // Fallback for HTTP (non-localhost): use input[webkitdirectory]
+            tryLocalFolderFallback();
+            return;
+        }
         try {
             var h = await window.showDirectoryPicker({ mode: 'read' });
             saveFolderHandle(h);
             await scanLocalHandle(h, false);
-            selectSubfolder(''); // Load tracks now (user explicitly chose this folder)
+            selectSubfolder('');
         } catch(e) { if (e.name !== 'AbortError') console.error('Local folder error:', e); }
+    }
+
+    function tryLocalFolderFallback() {
+        var input = document.createElement('input');
+        input.type = 'file';
+        input.webkitdirectory = true;
+        input.style.display = 'none';
+        input.onchange = async function() {
+            var files = [];
+            Array.prototype.push.apply(files, input.files);
+            if (!files.length) return;
+            // Group files by relative path for subfolder detection
+            var rootName = '';
+            var subFolders = {};
+            for (var i = 0; i < files.length; i++) {
+                var f = files[i];
+                var path = f.webkitRelativePath || f.name;
+                var slash = path.indexOf('/');
+                if (slash > 0) {
+                    var folder = path.substring(0, slash);
+                    if (!subFolders[folder]) subFolders[folder] = { files: [], lrcs: [] };
+                    if (MetadataReader.isAudioFile(f.name)) subFolders[folder].files.push(f);
+                    else if (MetadataReader.isLRCFile(f.name)) subFolders[folder].lrcs.push(f);
+                } else {
+                    if (!rootName) rootName = f.name;
+                    if (!subFolders['']) subFolders[''] = { files: [], lrcs: [] };
+                    if (MetadataReader.isAudioFile(f.name)) subFolders[''].files.push(f);
+                    else if (MetadataReader.isLRCFile(f.name)) subFolders[''].lrcs.push(f);
+                }
+            }
+            if (rootName) currentLabel = rootName;
+            UI.updateSourceLabel(rootName || '本地');
+            sourceMode = 'local';
+            currentSubfolder = '';
+            localFileCache = {};
+            localTracksCache = {};
+            localSubfolders = [];
+            for (var k in subFolders) {
+                if (subFolders.hasOwnProperty(k)) {
+                    var sd = subFolders[k];
+                    if (k === '') {
+                        localTracksCache[''] = { files: sd.files, lrcs: sd.lrcs };
+                    } else {
+                        localSubfolders.push({ name: k, path: k, count: sd.files.length });
+                        localTracksCache[k] = { files: sd.files, lrcs: sd.lrcs };
+                    }
+                }
+            }
+            var rootCount = localTracksCache[''] ? localTracksCache[''].files.length : 0;
+            UI.renderSourceFolders(localSubfolders, rootCount, '', document.getElementById('source-local-folders'));
+            UI.toggleSourcePanel(true);
+            selectSubfolder('');
+        };
+        input.click();
     }
 
     async function scanLocalHandle(h, silent) {
