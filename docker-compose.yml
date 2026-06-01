@@ -1,10 +1,10 @@
 services:
-  salt-music:
+  salt-player:
     image: ghcr.io/kkw114/salt-web_music-by-ai:latest
     ports:
       - "3000:3000"
     volumes:
-      - /volume1/Music:/music
+      - /你的音乐路径:/music
     environment:
       - MUSIC_DIR=/music
     restart: unless-stopped
