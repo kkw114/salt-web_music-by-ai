@@ -3,15 +3,259 @@ const path = require('path');
 const fs = require('fs');
 const { parseFile, parseBuffer } = require('music-metadata');
 
+// NetEase Cloud Music API
+let neteaseApi = null;
+try {
+    neteaseApi = require('@neteasecloudmusicapienhanced/api');
+    console.log('NetEase Cloud Music API loaded');
+} catch (e) {
+    console.warn('NetEase API not available:', e.message);
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
-const MUSIC_DIR = process.env.MUSIC_DIR || path.join(__dirname, 'testmusic');
+const MUSIC_DIR = process.env.MUSIC_DIR || path.join(__dirname, 'music');
 
 const AUDIO_EXTS = ['.mp3', '.flac', '.wav', '.ogg', '.aac', '.m4a', '.wma', '.opus', '.webm'];
 
 app.use(express.static(__dirname));
 app.use('/music', express.static(MUSIC_DIR));
 app.use(express.json());
+
+// NetEase Cloud Music API proxy routes
+if (neteaseApi) {
+    // Generic proxy handler for NetEase API
+    async function proxyNeteaseApi(apiName, params) {
+        try {
+            if (typeof neteaseApi[apiName] !== 'function') {
+                throw new Error('API not found: ' + apiName);
+            }
+            const result = await neteaseApi[apiName](params);
+            return result;
+        } catch (e) {
+            console.error('NetEase API error:', apiName, e.message);
+            throw e;
+        }
+    }
+
+    // Helper to extract cookie from query
+    function getCookieFromReq(req) {
+        return req.query.cookie || '';
+    }
+
+    // Search songs
+    app.get('/api/netease/search', async (req, res) => {
+        try {
+            const { keywords, type = 1, limit = 30, offset = 0 } = req.query;
+            if (!keywords) return res.status(400).json({ error: 'keywords required' });
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('search', { keywords, type: Number(type), limit: Number(limit), offset: Number(offset), cookie });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Get song URL
+    app.get('/api/netease/song/url', async (req, res) => {
+        try {
+            const { id, br = 320000 } = req.query;
+            if (!id) return res.status(400).json({ error: 'id required' });
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('song_url', { id, br: Number(br), cookie });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Get song detail
+    app.get('/api/netease/song/detail', async (req, res) => {
+        try {
+            const { ids } = req.query;
+            if (!ids) return res.status(400).json({ error: 'ids required' });
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('song_detail', { ids, cookie });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Get lyrics
+    app.get('/api/netease/lyric', async (req, res) => {
+        try {
+            const { id } = req.query;
+            if (!id) return res.status(400).json({ error: 'id required' });
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('lyric', { id, cookie });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Get playlist detail
+    app.get('/api/netease/playlist/detail', async (req, res) => {
+        try {
+            const { id } = req.query;
+            if (!id) return res.status(400).json({ error: 'id required' });
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('playlist_detail', { id, cookie });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Get personalized playlists
+    app.get('/api/netease/personalized', async (req, res) => {
+        try {
+            const { limit = 30 } = req.query;
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('personalized', { limit: Number(limit), cookie });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Get toplists
+    app.get('/api/netease/toplist', async (req, res) => {
+        try {
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('toplist', { cookie });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Get top playlist
+    app.get('/api/netease/top/playlist', async (req, res) => {
+        try {
+            const { order = 'hot', cat = '', limit = 30, offset = 0 } = req.query;
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('top_playlist', { order, cat, limit: Number(limit), offset: Number(offset), cookie });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // QR code login - get key
+    app.get('/api/netease/login/qr/key', async (req, res) => {
+        try {
+            const result = await proxyNeteaseApi('login_qr_key', { timestamp: Date.now() });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // QR code login - create QR
+    app.get('/api/netease/login/qr/create', async (req, res) => {
+        try {
+            const { key, qrimg = true } = req.query;
+            if (!key) return res.status(400).json({ error: 'key required' });
+            const result = await proxyNeteaseApi('login_qr_create', { key, qrimg: qrimg === 'true' || qrimg === true, timestamp: Date.now() });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // QR code login - check status
+    app.get('/api/netease/login/qr/check', async (req, res) => {
+        try {
+            const { key } = req.query;
+            if (!key) return res.status(400).json({ error: 'key required' });
+            const result = await proxyNeteaseApi('login_qr_check', { key, timestamp: Date.now() });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Phone login
+    app.post('/api/netease/login/cellphone', async (req, res) => {
+        try {
+            const { phone, password, countrycode } = req.body;
+            if (!phone || !password) return res.status(400).json({ error: 'phone and password required' });
+            const params = { phone, password };
+            if (countrycode) params.countrycode = countrycode;
+            const result = await proxyNeteaseApi('login_cellphone', params);
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Get user account
+    app.get('/api/netease/user/account', async (req, res) => {
+        try {
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('user_account', { cookie, timestamp: Date.now() });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Get user playlist
+    app.get('/api/netease/user/playlist', async (req, res) => {
+        try {
+            const { uid, limit = 100, offset = 0 } = req.query;
+            if (!uid) return res.status(400).json({ error: 'uid required' });
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('user_playlist', { uid: Number(uid), limit: Number(limit), offset: Number(offset), cookie, timestamp: Date.now() });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Refresh login
+    app.get('/api/netease/login/refresh', async (req, res) => {
+        try {
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('login_refresh', { cookie, timestamp: Date.now() });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Daily recommend songs
+    app.get('/api/netease/recommend/songs', async (req, res) => {
+        try {
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('recommend_songs', { cookie, timestamp: Date.now() });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Artist hot songs
+    app.get('/api/netease/artists', async (req, res) => {
+        try {
+            const { id } = req.query;
+            if (!id) return res.status(400).json({ error: 'id required' });
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('artists', { id: Number(id), cookie });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Album detail
+    app.get('/api/netease/album', async (req, res) => {
+        try {
+            const { id } = req.query;
+            if (!id) return res.status(400).json({ error: 'id required' });
+            const cookie = getCookieFromReq(req);
+            const result = await proxyNeteaseApi('album', { id: Number(id), cookie });
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Proxy cover image to avoid CORS
+    app.get('/api/netease/cover', async (req, res) => {
+        try {
+            const { url } = req.query;
+            if (!url) return res.status(400).end();
+            const https = require('https');
+            const http = require('http');
+            const targetUrl = decodeURIComponent(url);
+            const isHttps = targetUrl.startsWith('https');
+            const mod = isHttps ? https : http;
+            mod.get(targetUrl, { headers: { 'Referer': 'https://music.163.com/' } }, (proxyRes) => {
+                if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+                    // Follow redirect
+                    mod.get(proxyRes.headers.location, (redirectRes) => {
+                        res.set('Content-Type', redirectRes.headers['content-type'] || 'image/jpeg');
+                        res.set('Cache-Control', 'public, max-age=86400');
+                        redirectRes.pipe(res);
+                    }).on('error', () => res.status(404).end());
+                    return;
+                }
+                res.set('Content-Type', proxyRes.headers['content-type'] || 'image/jpeg');
+                res.set('Cache-Control', 'public, max-age=86400');
+                proxyRes.pipe(res);
+            }).on('error', () => res.status(404).end());
+        } catch (e) { res.status(404).end(); }
+    });
+
+    console.log('NetEase API routes registered at /api/netease/*');
+}
 
 // WebDAV session store
 const webdavSessions = {};

@@ -80,6 +80,10 @@ const Settings = (() => {
     lastSubfolder: '',
     lastTrackIndex: -1,
     webdavConnections: [],
+
+    // NetEase
+    neteaseQuality: '320000',
+    neteaseVipType: 'auto', // auto, vip, svip
   };
 
   let settings = {};

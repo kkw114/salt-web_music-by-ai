@@ -60,7 +60,7 @@
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
                 </svg>
-                <span id="source-label">testmusic</span>
+                <span id="source-label">SaltWeb</span>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="source-chevron">
                     <polyline points="6 9 12 15 18 9"/>
                 </svg>
@@ -157,6 +157,7 @@
                 </div>
 
                 <div class="controls-right">
+                    <span class="netease-quality-display" id="netease-quality"></span>
                     <button id="btn-speed" class="icon-btn small">1x</button>
                     <div class="volume-control">
                         <button id="btn-mute" class="icon-btn small" title="静音">
@@ -202,6 +203,7 @@
         <div class="source-menu">
             <div class="source-tabs" id="source-tabs">
                 <button class="source-tab active" data-tab="default">默认</button>
+                <button class="source-tab" data-tab="netease">网易云</button>
                 <button class="source-tab" data-tab="webdav">WebDAV</button>
                 <button class="source-tab" data-tab="local">本地</button>
             </div>
@@ -215,6 +217,7 @@
                         <span class="source-folder-count" id="source-all-count">0</span>
                     </div>
                 </div>
+                <div id="source-tab-netease" class="hidden"></div>
                 <div id="source-tab-webdav" class="hidden">
                     <div class="webdav-user-bar" id="webdav-user-bar">
                         <div class="webdav-user-bar-header" id="webdav-user-bar-header">
@@ -267,6 +270,8 @@
     <script src="js/metadata.js"></script>
     <script src="js/playlist.js"></script>
     <script src="js/ui.js"></script>
+    <script src="js/netease-api.js"></script>
+    <script src="js/netease-ui.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

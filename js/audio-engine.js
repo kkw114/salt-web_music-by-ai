@@ -139,9 +139,19 @@ const AudioEngine = (() => {
         emit('pause');
     }
 
+    let seekTimer = null;
+    let isSeeking = false;
+
     function seek(time) {
         if (sound) {
-            sound.seek(time);
+            // Debounce rapid seeks
+            if (seekTimer) clearTimeout(seekTimer);
+            isSeeking = true;
+            seekTimer = setTimeout(function() {
+                sound.seek(time);
+                isSeeking = false;
+            }, 50);
+            // Emit timeupdate immediately for UI responsiveness
             emit('timeupdate', {
                 current: time,
                 duration: sound.duration()
@@ -200,7 +210,7 @@ const AudioEngine = (() => {
     function startTimeUpdate() {
         stopTimeUpdate();
         updateInterval = setInterval(() => {
-            if (sound && isPlaying) {
+            if (sound && isPlaying && !isSeeking) {
                 emit('timeupdate', {
                     current: sound.seek(),
                     duration: sound.duration()

@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@neteasecloudmusicapienhanced/api": "^4.34.3",
     "express": "^5.2.1",
     "multer": "^2.1.1",
     "music-metadata": "^7.14.0"

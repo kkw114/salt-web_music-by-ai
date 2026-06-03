@@ -1,0 +1,866 @@
+/**
+ * NetEase Cloud Music UI Module
+ * Handles rendering of search, playlists, and login UI
+ */
+
+const NetEaseUI = (() => {
+    let searchTimer = null;
+    let currentSearchType = 1; // 1=songs, 1000=playlists
+    let isLoggedIn = false;
+    let userId = null;
+    let currentContextLabel = '网易云音乐'; // Current context label for source display
+    let userIsVip = false; // Whether user has VIP
+
+    function escapeHtml(s) {
+        var d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    // Initialize NetEase panel
+    function init() {
+        renderMainPanel();
+        bindEvents();
+    }
+
+    // Render the main NetEase panel
+    function renderMainPanel() {
+        var container = document.getElementById('source-tab-netease');
+        if (!container) return;
+        container.innerHTML = '' +
+            '<div class="netease-panel">' +
+                '<div class="netease-login-bar" id="netease-login-bar">' +
+                    '<div class="netease-user-info hidden" id="netease-user-info">' +
+                        '<img id="netease-avatar" class="netease-avatar" src="" alt=""/>' +
+                        '<span id="netease-username"></span>' +
+                        '<button class="netease-logout-btn" id="netease-logout-btn">退出</button>' +
+                    '</div>' +
+                    '<button class="netease-login-btn" id="netease-login-btn">' +
+                        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' +
+                        ' 登录网易云' +
+                    '</button>' +
+                '</div>' +
+                '<div class="netease-search-box">' +
+                    '<div class="netease-search-input-wrapper">' +
+                        '<input type="text" id="netease-search-input" class="netease-search-input" placeholder="搜索歌曲、歌手、歌单..."/>' +
+                        '<button class="netease-search-clear hidden" id="netease-search-clear">✕</button>' +
+                    '</div>' +
+                    '<div class="netease-search-tabs" id="netease-search-tabs">' +
+                        '<button class="netease-search-tab active" data-type="1">单曲</button>' +
+                        '<button class="netease-search-tab" data-type="1000">歌单</button>' +
+                        '<button class="netease-search-tab" data-type="100">歌手</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="netease-content" id="netease-content">' +
+                    '<div class="netease-section" id="netease-user-playlists-section">' +
+                        '<div class="netease-section-title">我的歌单</div>' +
+                        '<div class="netease-playlist-list" id="netease-user-playlists"></div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="netease-search-results hidden" id="netease-search-results">' +
+                    '<div class="netease-results-list" id="netease-results-list"></div>' +
+                '</div>' +
+                '<div class="netease-playlist-detail hidden" id="netease-playlist-detail">' +
+                    '<div class="netease-detail-header" id="netease-detail-header"></div>' +
+                    '<div class="netease-detail-tracks" id="netease-detail-tracks"></div>' +
+                '</div>' +
+            '</div>';
+
+        // Login modal
+        var loginModal = document.createElement('div');
+        loginModal.id = 'netease-login-modal';
+        loginModal.className = 'netease-login-modal hidden';
+        loginModal.innerHTML = '' +
+            '<div class="netease-login-overlay" id="netease-login-overlay"></div>' +
+            '<div class="netease-login-content">' +
+                '<div class="netease-login-tabs">' +
+                    '<button class="netease-login-tab active" data-method="qr">扫码登录</button>' +
+                    '<button class="netease-login-tab" data-method="phone">手机登录</button>' +
+                    '<button class="netease-login-close" id="netease-login-close">✕</button>' +
+                '</div>' +
+                '<div class="netease-login-body" id="netease-login-body">' +
+                    '<div id="netease-qr-section">' +
+                        '<div class="netease-qr-wrapper">' +
+                            '<canvas id="netease-qr-canvas"></canvas>' +
+                            '<div class="netease-qr-status" id="netease-qr-status">打开网易云音乐APP扫码登录</div>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div id="netease-phone-section" class="hidden">' +
+                        '<input type="text" id="netease-phone-input" class="netease-input" placeholder="手机号"/>' +
+                        '<input type="password" id="netease-pass-input" class="netease-input" placeholder="密码"/>' +
+                        '<button class="netease-phone-login-btn" id="netease-phone-login-btn">登录</button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        document.body.appendChild(loginModal);
+    }
+
+    // Bind events
+    function bindEvents() {
+        // Search input
+        var searchInput = document.getElementById('netease-search-input');
+        var searchTabs = document.getElementById('netease-search-tabs');
+        var searchClear = document.getElementById('netease-search-clear');
+        if (searchInput) {
+            // Hide tabs initially
+            if (searchTabs) searchTabs.classList.add('hidden');
+
+            searchInput.addEventListener('input', function() {
+                clearTimeout(searchTimer);
+                var q = this.value.trim();
+                // Show/hide clear button
+                if (searchClear) searchClear.classList.toggle('hidden', !q);
+                if (!q) {
+                    // Empty - hide tabs and results, show content
+                    if (searchTabs) searchTabs.classList.add('hidden');
+                    hideSearchResults();
+                    var contentEl = document.getElementById('netease-content');
+                    var detailEl = document.getElementById('netease-playlist-detail');
+                    if (contentEl) contentEl.classList.remove('hidden');
+                    if (detailEl) detailEl.classList.add('hidden');
+                    // Reload user playlists
+                    if (isLoggedIn) loadUserPlaylists();
+                    return;
+                }
+                // Has content - show tabs
+                if (searchTabs) searchTabs.classList.remove('hidden');
+                searchTimer = setTimeout(function() { doSearch(q); }, 400);
+            });
+            searchInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    clearTimeout(searchTimer);
+                    var q = this.value.trim();
+                    if (q) doSearch(q);
+                }
+            });
+        }
+
+        // Clear button
+        if (searchClear) {
+            searchClear.addEventListener('click', function() {
+                if (searchInput) {
+                    searchInput.value = '';
+                    searchInput.focus();
+                    searchClear.classList.add('hidden');
+                    if (searchTabs) searchTabs.classList.add('hidden');
+                    hideSearchResults();
+                    var contentEl = document.getElementById('netease-content');
+                    var detailEl = document.getElementById('netease-playlist-detail');
+                    if (contentEl) contentEl.classList.remove('hidden');
+                    if (detailEl) detailEl.classList.add('hidden');
+                    if (isLoggedIn) loadUserPlaylists();
+                }
+            });
+        }
+
+        // Search type tabs
+        var tabsContainer = document.getElementById('netease-search-tabs');
+        if (tabsContainer) {
+            tabsContainer.addEventListener('click', function(e) {
+                var tab = e.target.closest('.netease-search-tab');
+                if (!tab) return;
+                tabsContainer.querySelectorAll('.netease-search-tab').forEach(function(t) { t.classList.remove('active'); });
+                tab.classList.add('active');
+                currentSearchType = parseInt(tab.dataset.type);
+                var q = document.getElementById('netease-search-input').value.trim();
+                if (q) doSearch(q);
+            });
+        }
+
+        // Login button
+        var loginBtn = document.getElementById('netease-login-btn');
+        if (loginBtn) {
+            loginBtn.addEventListener('click', function() { showLoginModal(); });
+        }
+
+        // Logout button
+        var logoutBtn = document.getElementById('netease-logout-btn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', function() { doLogout(); });
+        }
+
+        // Login modal close
+        var loginClose = document.getElementById('netease-login-close');
+        if (loginClose) {
+            loginClose.addEventListener('click', function() { hideLoginModal(); });
+        }
+        var loginOverlay = document.getElementById('netease-login-overlay');
+        if (loginOverlay) {
+            loginOverlay.addEventListener('click', function() { hideLoginModal(); });
+        }
+
+        // Login tabs
+        var loginModal = document.getElementById('netease-login-modal');
+        if (loginModal) {
+            loginModal.addEventListener('click', function(e) {
+                var tab = e.target.closest('.netease-login-tab');
+                if (!tab) return;
+                loginModal.querySelectorAll('.netease-login-tab').forEach(function(t) { t.classList.remove('active'); });
+                tab.classList.add('active');
+                var method = tab.dataset.method;
+                document.getElementById('netease-qr-section').classList.toggle('hidden', method !== 'qr');
+                document.getElementById('netease-phone-section').classList.toggle('hidden', method !== 'phone');
+                if (method === 'qr') startQrLogin();
+            });
+        }
+
+        // Phone login button
+        var phoneLoginBtn = document.getElementById('netease-phone-login-btn');
+        if (phoneLoginBtn) {
+            phoneLoginBtn.addEventListener('click', function() { doPhoneLogin(); });
+        }
+    }
+
+    // Load user playlists
+    async function loadUserPlaylists() {
+        var container = document.getElementById('netease-user-playlists');
+        if (!container) return;
+        container.innerHTML = '<div class="netease-loading">加载中...</div>';
+
+        console.log('[NetEase] Loading user playlists, cookie:', NetEaseAPI.getCookie() ? 'set' : 'not set');
+
+        var accountData = await NetEaseAPI.getUserAccount();
+        console.log('[NetEase] Account data:', accountData);
+        if (!accountData || !accountData.profile) {
+            container.innerHTML = '<div class="netease-empty">请先登录</div>';
+            return;
+        }
+
+        var uid = accountData.profile.userId;
+        console.log('[NetEase] User ID:', uid);
+        var data = await NetEaseAPI.getUserPlaylist(uid, 100);
+        console.log('[NetEase] Playlist data:', data);
+        if (!data || !data.playlist) {
+            container.innerHTML = '<div class="netease-empty">加载失败</div>';
+            return;
+        }
+
+        container.innerHTML = '';
+        var playlists = data.playlist;
+
+        // Separate created and subscribed playlists
+        var created = playlists.filter(function(p) { return p.creator && p.creator.userId === uid; });
+        var subscribed = playlists.filter(function(p) { return !p.creator || p.creator.userId !== uid; });
+
+        // Render created playlists
+        if (created.length > 0) {
+            var createdSection = document.createElement('div');
+            createdSection.className = 'netease-playlist-group';
+            created.forEach(function(pl) {
+                createdSection.appendChild(createPlaylistItem(pl));
+            });
+            container.appendChild(createdSection);
+        }
+
+        // Render subscribed playlists
+        if (subscribed.length > 0) {
+            var subLabel = document.createElement('div');
+            subLabel.className = 'netease-playlist-group-label';
+            subLabel.textContent = '收藏歌单';
+            container.appendChild(subLabel);
+            var subSection = document.createElement('div');
+            subSection.className = 'netease-playlist-group';
+            subscribed.forEach(function(pl) {
+                subSection.appendChild(createPlaylistItem(pl));
+            });
+            container.appendChild(subSection);
+        }
+    }
+
+    function createPlaylistItem(pl) {
+        var coverUrl = pl.coverImgUrl ? '/api/netease/cover?url=' + encodeURIComponent(pl.coverImgUrl + '?param=100y100') : '';
+        var item = document.createElement('div');
+        item.className = 'netease-playlist-list-item';
+        item.innerHTML = '' +
+            '<img class="netease-playlist-list-cover" src="' + coverUrl + '" alt="" loading="lazy"/>' +
+            '<div class="netease-playlist-list-info">' +
+                '<div class="netease-playlist-list-name">' + escapeHtml(pl.name) + '</div>' +
+                '<div class="netease-playlist-list-count">' + pl.trackCount + ' 首</div>' +
+            '</div>';
+        item.addEventListener('click', function() { loadPlaylistDetail(pl.id); });
+        return item;
+    }
+
+    // Load playlist detail
+    async function loadPlaylistDetail(id) {
+        var detailPanel = document.getElementById('netease-playlist-detail');
+        var headerEl = document.getElementById('netease-detail-header');
+        var tracksEl = document.getElementById('netease-detail-tracks');
+        var contentEl = document.getElementById('netease-content');
+        if (!detailPanel) return;
+
+        detailPanel.classList.remove('hidden');
+        if (contentEl) contentEl.classList.add('hidden');
+        hideSearchResults();
+
+        headerEl.innerHTML = '<div class="netease-loading">加载中...</div>';
+        tracksEl.innerHTML = '';
+
+        var data = await NetEaseAPI.getPlaylistDetail(id);
+        if (!data || !data.playlist) {
+            headerEl.innerHTML = '<div class="netease-empty">加载失败</div>';
+            return;
+        }
+
+        var pl = data.playlist;
+        var plCoverUrl = pl.coverImgUrl ? '/api/netease/cover?url=' + encodeURIComponent(pl.coverImgUrl + '?param=300y300') : '';
+        headerEl.innerHTML = '' +
+            '<button class="netease-back-btn" id="netease-back-btn">' +
+                '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>' +
+                ' 返回' +
+            '</button>' +
+            '<div class="netease-detail-info">' +
+                '<img class="netease-detail-cover" src="' + plCoverUrl + '" alt=""/>' +
+                '<div class="netease-detail-meta">' +
+                    '<div class="netease-detail-name">' + escapeHtml(pl.name) + '</div>' +
+                    '<div class="netease-detail-count">' + pl.trackCount + ' 首歌曲</div>' +
+                    '<button class="netease-play-all-btn" id="netease-play-all-btn">' +
+                        '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' +
+                        ' 播放全部' +
+                    '</button>' +
+                '</div>' +
+            '</div>';
+
+        // Back button
+        document.getElementById('netease-back-btn').addEventListener('click', function() {
+            detailPanel.classList.add('hidden');
+            if (contentEl) contentEl.classList.remove('hidden');
+        });
+
+        var allTracks = pl.tracks || [];
+        console.log('[NetEase] Playlist tracks:', allTracks.length, allTracks[0]);
+
+        // If tracks are incomplete (only have IDs or missing artist info), fetch full details
+        var needFetch = allTracks.length > 0 && (
+            !allTracks[0].ar && !allTracks[0].artists ||
+            allTracks[0].id && !allTracks[0].name
+        );
+        console.log('[NetEase] Need fetch details:', needFetch);
+        if (needFetch) {
+            tracksEl.innerHTML = '<div class="netease-loading">加载歌曲详情...</div>';
+            // Fetch in batches of 100
+            var fetchedTracks = [];
+            for (var i = 0; i < allTracks.length; i += 100) {
+                var batch = allTracks.slice(i, i + 100);
+                var trackIds = batch.map(function(t) { return t.id || t; }).join(',');
+                console.log('[NetEase] Fetching batch:', i, '-', Math.min(i + 100, allTracks.length));
+                var detailData = await NetEaseAPI.getSongDetail(trackIds);
+                if (detailData && detailData.songs) {
+                    fetchedTracks = fetchedTracks.concat(detailData.songs);
+                }
+            }
+            console.log('[NetEase] Fetched tracks:', fetchedTracks.length);
+            if (fetchedTracks.length > 0) {
+                allTracks = fetchedTracks;
+            }
+        }
+
+        // Play all button
+        document.getElementById('netease-play-all-btn').addEventListener('click', function() {
+            playNeteaseTracks(allTracks, 0, pl.name);
+        });
+
+        // Render tracks
+        tracksEl.innerHTML = '';
+        allTracks.forEach(function(track, index) {
+            var converted = NetEaseAPI.convertTrack(track);
+            var item = document.createElement('div');
+            item.className = 'netease-track-item';
+            item.innerHTML = '' +
+                '<span class="netease-track-num">' + (index + 1) + '</span>' +
+                '<div class="netease-track-info">' +
+                    '<div class="netease-track-title">' + escapeHtml(converted.title) + '</div>' +
+                    '<div class="netease-track-artist">' + escapeHtml(converted.artist) + '</div>' +
+                '</div>' +
+                '<span class="netease-track-duration">' + formatDuration(converted.duration) + '</span>';
+            item.addEventListener('click', function() { playNeteaseTracks(allTracks, index, pl.name); });
+            tracksEl.appendChild(item);
+        });
+    }
+
+    // Search
+    async function doSearch(keywords) {
+        var resultsPanel = document.getElementById('netease-search-results');
+        var resultsList = document.getElementById('netease-results-list');
+        var contentEl = document.getElementById('netease-content');
+        var detailPanel = document.getElementById('netease-playlist-detail');
+        if (!resultsPanel) return;
+
+        resultsPanel.classList.remove('hidden');
+        if (contentEl) contentEl.classList.add('hidden');
+        if (detailPanel) detailPanel.classList.add('hidden');
+
+        resultsList.innerHTML = '<div class="netease-loading">搜索中...</div>';
+
+        var data = null;
+        // Retry up to 3 times with 1s interval
+        for (var retry = 0; retry < 3; retry++) {
+            data = await NetEaseAPI.search(keywords, currentSearchType, 30, 0);
+            if (data && data.result) break; // Success, stop retrying
+            if (retry < 2) {
+                resultsList.innerHTML = '<div class="netease-loading">搜索中... (' + (retry + 2) + '/3)</div>';
+                await new Promise(function(r) { setTimeout(r, 1000); });
+            }
+        }
+
+        if (!data || !data.result) {
+            resultsList.innerHTML = '' +
+                '<div class="netease-empty">搜索失败</div>' +
+                '<button class="netease-retry-btn" id="netease-retry-btn">重试</button>';
+            document.getElementById('netease-retry-btn').addEventListener('click', function() {
+                doSearch(keywords);
+            });
+            return;
+        }
+
+        resultsList.innerHTML = '';
+
+        if (currentSearchType === 1) {
+            // Songs
+            var songs = data.result.songs || [];
+            if (!songs.length) { resultsList.innerHTML = '<div class="netease-empty">未找到歌曲</div>'; return; }
+            var searchLabel = keywords + ' · 搜索';
+            songs.forEach(function(track, index) {
+                var converted = NetEaseAPI.convertTrack(track);
+                var item = document.createElement('div');
+                item.className = 'netease-track-item';
+                item.innerHTML = '' +
+                    '<span class="netease-track-num">' + (index + 1) + '</span>' +
+                    '<div class="netease-track-info">' +
+                        '<div class="netease-track-title">' + escapeHtml(converted.title) + '</div>' +
+                        '<div class="netease-track-artist">' + escapeHtml(converted.artist) + ' · ' + escapeHtml(converted.album) + '</div>' +
+                    '</div>';
+                item.addEventListener('click', function() { playNeteaseTracks(songs, index, searchLabel); });
+                resultsList.appendChild(item);
+            });
+        } else if (currentSearchType === 1000) {
+            // Playlists
+            var playlists = data.result.playlists || [];
+            if (!playlists.length) { resultsList.innerHTML = '<div class="netease-empty">未找到歌单</div>'; return; }
+            playlists.forEach(function(pl) {
+                var item = document.createElement('div');
+                item.className = 'netease-track-item netease-playlist-result';
+                item.innerHTML = '' +
+                    '<img class="netease-result-cover" src="' + (pl.coverImgUrl ? pl.coverImgUrl + '?param=100y100' : '') + '" alt=""/>' +
+                    '<div class="netease-track-info">' +
+                        '<div class="netease-track-title">' + escapeHtml(pl.name) + '</div>' +
+                        '<div class="netease-track-artist">' + pl.trackCount + ' 首 · ' + formatCount(pl.playCount) + ' 次播放</div>' +
+                    '</div>';
+                item.addEventListener('click', function() { loadPlaylistDetail(pl.id); });
+                resultsList.appendChild(item);
+            });
+        } else if (currentSearchType === 100) {
+            // Artists
+            var artists = data.result.artists || [];
+            if (!artists.length) { resultsList.innerHTML = '<div class="netease-empty">未找到歌手</div>'; return; }
+            artists.forEach(function(artist) {
+                var item = document.createElement('div');
+                item.className = 'netease-track-item netease-artist-result';
+                item.innerHTML = '' +
+                    '<img class="netease-result-cover netease-artist-cover" src="' + (artist.picUrl ? artist.picUrl + '?param=100y100' : '') + '" alt=""/>' +
+                    '<div class="netease-track-info">' +
+                        '<div class="netease-track-title">' + escapeHtml(artist.name) + '</div>' +
+                        '<div class="netease-track-artist">' + (artist.alias && artist.alias.length ? artist.alias[0] : '歌手') + '</div>' +
+                    '</div>';
+                item.addEventListener('click', function() { loadArtistTracks(artist.id); });
+                resultsList.appendChild(item);
+            });
+        }
+    }
+
+    // Load artist hot songs
+    async function loadArtistTracks(id) {
+        var detailPanel = document.getElementById('netease-playlist-detail');
+        var headerEl = document.getElementById('netease-detail-header');
+        var tracksEl = document.getElementById('netease-detail-tracks');
+        var contentEl = document.getElementById('netease-content');
+        if (!detailPanel) return;
+
+        detailPanel.classList.remove('hidden');
+        if (contentEl) contentEl.classList.add('hidden');
+        hideSearchResults();
+
+        headerEl.innerHTML = '<div class="netease-loading">加载中...</div>';
+        tracksEl.innerHTML = '';
+
+        var data = await NetEaseAPI.getArtist(id);
+        if (!data || !data.hotSongs) {
+            headerEl.innerHTML = '<div class="netease-empty">加载失败</div>';
+            return;
+        }
+
+        var artistCoverUrl = data.artist && data.artist.picUrl ? '/api/netease/cover?url=' + encodeURIComponent(data.artist.picUrl + '?param=300y300') : '';
+        headerEl.innerHTML = '' +
+            '<button class="netease-back-btn" id="netease-back-btn">' +
+                '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>' +
+                ' 返回' +
+            '</button>' +
+            '<div class="netease-detail-info">' +
+                '<img class="netease-detail-cover" src="' + artistCoverUrl + '" alt=""/>' +
+                '<div class="netease-detail-meta">' +
+                    '<div class="netease-detail-name">' + (data.artist ? escapeHtml(data.artist.name) : '歌手') + '</div>' +
+                    '<div class="netease-detail-count">' + data.hotSongs.length + ' 首热门歌曲</div>' +
+                    '<button class="netease-play-all-btn" id="netease-play-all-btn">' +
+                        '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>' +
+                        ' 播放全部' +
+                    '</button>' +
+                '</div>' +
+            '</div>';
+
+        document.getElementById('netease-back-btn').addEventListener('click', function() {
+            detailPanel.classList.add('hidden');
+            if (contentEl) contentEl.classList.remove('hidden');
+        });
+
+        var artistName = data.artist ? data.artist.name : '歌手';
+        document.getElementById('netease-play-all-btn').addEventListener('click', function() {
+            playNeteaseTracks(data.hotSongs, 0, artistName);
+        });
+
+        tracksEl.innerHTML = '';
+        data.hotSongs.forEach(function(track, index) {
+            var converted = NetEaseAPI.convertTrack(track);
+            var item = document.createElement('div');
+            item.className = 'netease-track-item';
+            item.innerHTML = '' +
+                '<span class="netease-track-num">' + (index + 1) + '</span>' +
+                '<div class="netease-track-info">' +
+                    '<div class="netease-track-title">' + escapeHtml(converted.title) + '</div>' +
+                    '<div class="netease-track-artist">' + escapeHtml(converted.artist) + ' · ' + escapeHtml(converted.album) + '</div>' +
+                '</div>' +
+                '<span class="netease-track-duration">' + formatDuration(converted.duration) + '</span>';
+            item.addEventListener('click', function() { playNeteaseTracks(data.hotSongs, index, artistName); });
+            tracksEl.appendChild(item);
+        });
+    }
+
+    function hideSearchResults() {
+        var el = document.getElementById('netease-search-results');
+        if (el) el.classList.add('hidden');
+        // Also hide search tabs
+        var tabs = document.getElementById('netease-search-tabs');
+        if (tabs) tabs.classList.add('hidden');
+    }
+
+    // Play NetEase tracks
+    async function playNeteaseTracks(tracks, startIndex, contextLabel) {
+        if (!tracks || !tracks.length) return;
+        if (contextLabel) currentContextLabel = contextLabel;
+        var convertedTracks = tracks.map(function(t) { return NetEaseAPI.convertTrack(t); });
+
+        // Get song URLs for all tracks
+        var ids = tracks.map(function(t) { return t.id; }).join(',');
+        var urlData = await NetEaseAPI.getSongUrl(ids);
+        var qualityMap = {}; // trackId -> bitrate
+        if (urlData && urlData.data) {
+            urlData.data.forEach(function(item) {
+                qualityMap[item.id] = item.br || 0;
+                // Debug: log quality info
+                var dEl = document.getElementById('debug-log');
+                if (dEl && dEl.style.display !== 'none') {
+                    var trackName = '';
+                    for (var j = 0; j < tracks.length; j++) {
+                        if (tracks[j].id === item.id) { trackName = tracks[j].name; break; }
+                    }
+                    dEl.textContent += '[NetEase] ' + trackName + ' | 音质:' + (item.br || '?') + 'kbps | 类型:' + (item.type || '?') + ' | 试听:' + (item.freeTrialInfo ? '是' : '否') + '\n';
+                    dEl.scrollTop = dEl.scrollHeight;
+                }
+                for (var i = 0; i < convertedTracks.length; i++) {
+                    if (convertedTracks[i].id === item.id && item.url) {
+                        convertedTracks[i].url = item.url;
+                        convertedTracks[i].bitrate = item.br || 0;
+                    }
+                }
+            });
+        }
+
+        // Fetch song details for tracks without cover
+        var tracksNeedingCover = convertedTracks.filter(function(t) { return !t.coverUrl && t.url; });
+        if (tracksNeedingCover.length > 0) {
+            var coverIds = tracksNeedingCover.map(function(t) { return t.id; }).join(',');
+            var detailData = await NetEaseAPI.getSongDetail(coverIds);
+            if (detailData && detailData.songs) {
+                detailData.songs.forEach(function(song) {
+                    var coverUrl = null;
+                    if (song.al && song.al.picUrl) coverUrl = song.al.picUrl;
+                    else if (song.album && song.album.picUrl) coverUrl = song.album.picUrl;
+                    if (coverUrl) {
+                        var proxyUrl = '/api/netease/cover?url=' + encodeURIComponent(coverUrl + '?param=300y300');
+                        for (var i = 0; i < convertedTracks.length; i++) {
+                            if (convertedTracks[i].id === song.id) {
+                                convertedTracks[i].coverUrl = proxyUrl;
+                                convertedTracks[i].hasCover = true;
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        // Filter out tracks without URLs
+        var playableTracks = convertedTracks.filter(function(t) { return t.url; });
+        if (!playableTracks.length) {
+            alert('无法播放这些歌曲');
+            return;
+        }
+
+        // Adjust startIndex
+        var actualIndex = 0;
+        if (startIndex > 0) {
+            var targetId = tracks[startIndex].id;
+            for (var i = 0; i < playableTracks.length; i++) {
+                if (playableTracks[i].id === targetId) { actualIndex = i; break; }
+            }
+        }
+
+        // Set tracks and play
+        if (typeof PlaylistManager !== 'undefined') {
+            PlaylistManager.setTracks(playableTracks);
+            if (typeof UI !== 'undefined') {
+                UI.showPlayer();
+                // Update source label to username if logged in
+                var userLabel = '网易云音乐';
+                var usernameEl = document.getElementById('netease-username');
+                if (isLoggedIn && usernameEl) {
+                    // Get only text content without VIP badge
+                    var nameText = usernameEl.textContent || '';
+                    if (nameText && nameText !== '已登录') {
+                        // Remove VIP/SVIP text if present
+                        userLabel = nameText.replace(/\s*(VIP|SVIP)\s*$/, '').trim();
+                    }
+                }
+                UI.updateSourceLabel(userLabel);
+                UI.updateFolderName(currentContextLabel);
+                UI.renderPlaylist(playableTracks, actualIndex, currentContextLabel);
+                // Update quality display
+                updateQualityDisplay(playableTracks[actualIndex]);
+            }
+            PlaylistManager.setCurrentIndex(actualIndex);
+        }
+    }
+
+    function updateQualityDisplay(track) {
+        var el = document.getElementById('netease-quality');
+        if (!el) return;
+        if (!track || !track.url) { el.textContent = ''; return; }
+        // Use actual bitrate from track if available
+        if (track.bitrate) {
+            var br = track.bitrate;
+            if (br >= 999000) el.textContent = 'FLAC';
+            else if (br >= 350000) el.textContent = 'SQ';
+            else el.textContent = Math.round(br / 1000);
+        } else {
+            // Fallback to settings
+            var quality = '320';
+            if (typeof Settings !== 'undefined') {
+                var q = Settings.get('neteaseQuality') || '320000';
+                if (q === 'flac') quality = 'FLAC';
+                else quality = Math.round(parseInt(q) / 1000) + '';
+            }
+            el.textContent = quality;
+        }
+    }
+
+    // Get current context label
+    function getContextLabel() { return currentContextLabel; }
+
+    // Login modal
+    function showLoginModal() {
+        var modal = document.getElementById('netease-login-modal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            startQrLogin();
+        }
+    }
+
+    function hideLoginModal() {
+        var modal = document.getElementById('netease-login-modal');
+        if (modal) modal.classList.add('hidden');
+        stopQrPolling();
+    }
+
+    // QR code login
+    let qrPollTimer = null;
+
+    async function startQrLogin() {
+        var statusEl = document.getElementById('netease-qr-status');
+        if (statusEl) statusEl.textContent = '获取二维码...';
+
+        var keyData = await NetEaseAPI.getQrKey();
+        if (!keyData || !keyData.data || !keyData.data.unikey) {
+            if (statusEl) statusEl.textContent = '获取二维码失败';
+            return;
+        }
+
+        var key = keyData.data.unikey;
+        var qrData = await NetEaseAPI.createQrCode(key);
+        if (!qrData || !qrData.data || !qrData.data.qrimg) {
+            if (statusEl) statusEl.textContent = '生成二维码失败';
+            return;
+        }
+
+        // Draw QR code
+        var canvas = document.getElementById('netease-qr-canvas');
+        if (canvas) {
+            var ctx = canvas.getContext('2d');
+            var img = new Image();
+            img.onload = function() {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+            };
+            img.src = qrData.data.qrimg;
+        }
+
+        if (statusEl) statusEl.textContent = '打开网易云音乐APP扫码登录';
+
+        // Start polling
+        stopQrPolling();
+        qrPollTimer = setInterval(async function() {
+            var checkData = await NetEaseAPI.checkQrStatus(key);
+            if (!checkData) return;
+
+            if (checkData.code === 800) {
+                if (statusEl) statusEl.textContent = '二维码已过期，请刷新';
+                stopQrPolling();
+            } else if (checkData.code === 801) {
+                if (statusEl) statusEl.textContent = '等待扫码...';
+            } else if (checkData.code === 802) {
+                if (statusEl) statusEl.textContent = '已扫码，等待确认...';
+            } else if (checkData.code === 803) {
+                if (statusEl) statusEl.textContent = '登录成功！';
+                stopQrPolling();
+                console.log('[NetEase] QR login cookie length:', checkData.cookie ? checkData.cookie.length : 0);
+                if (checkData.cookie) {
+                    NetEaseAPI.setCookie(checkData.cookie);
+                    localStorage.setItem('netease-cookie', checkData.cookie);
+                }
+                isLoggedIn = true;
+                updateLoginUI();
+                setTimeout(hideLoginModal, 1000);
+            }
+        }, 2000);
+    }
+
+    function stopQrPolling() {
+        if (qrPollTimer) {
+            clearInterval(qrPollTimer);
+            qrPollTimer = null;
+        }
+    }
+
+    // Phone login
+    async function doPhoneLogin() {
+        var phone = document.getElementById('netease-phone-input').value.trim();
+        var pass = document.getElementById('netease-pass-input').value.trim();
+        if (!phone || !pass) { alert('请输入手机号和密码'); return; }
+
+        var data = await NetEaseAPI.loginWithPhone(phone, pass);
+        if (data && data.code === 200) {
+            if (data.cookie) {
+                NetEaseAPI.setCookie(data.cookie);
+                localStorage.setItem('netease-cookie', data.cookie);
+            }
+            isLoggedIn = true;
+            updateLoginUI();
+            hideLoginModal();
+        } else {
+            alert(data && data.msg ? data.msg : '登录失败');
+        }
+    }
+
+    // Logout
+    function doLogout() {
+        NetEaseAPI.setCookie('');
+        localStorage.removeItem('netease-cookie');
+        isLoggedIn = false;
+        userId = null;
+        updateLoginUI();
+    }
+
+    // Update login UI
+    function updateLoginUI() {
+        var loginBtn = document.getElementById('netease-login-btn');
+        var userInfo = document.getElementById('netease-user-info');
+        var username = document.getElementById('netease-username');
+        var avatar = document.getElementById('netease-avatar');
+
+        if (isLoggedIn) {
+            if (loginBtn) loginBtn.classList.add('hidden');
+            if (userInfo) userInfo.classList.remove('hidden');
+            if (username) username.textContent = '已登录';
+            // Try to get user info
+            NetEaseAPI.getUserAccount().then(function(data) {
+                if (data && data.profile) {
+                    var nickname = data.profile.nickname || '';
+                    // Check VIP status: viptypeVersion exists = has VIP
+                    userIsVip = !!data.profile.viptypeVersion;
+                    var vipTypeSetting = typeof Settings !== 'undefined' ? Settings.get('neteaseVipType') : 'auto';
+                    var displayType = vipTypeSetting;
+                    if (displayType === 'auto') {
+                        // Auto-detect: default to VIP if has viptypeVersion
+                        displayType = userIsVip ? 'vip' : 'none';
+                    }
+                    if (username) {
+                        username.innerHTML = escapeHtml(nickname);
+                        if (displayType === 'svip') {
+                            username.innerHTML += ' <span class="netease-vip-badge svip">SVIP</span>';
+                        } else if (displayType === 'vip') {
+                            username.innerHTML += ' <span class="netease-vip-badge">VIP</span>';
+                        }
+                    }
+                    if (avatar) avatar.src = data.profile.avatarUrl ? data.profile.avatarUrl + '?param=50y50' : '';
+                    if (typeof UI !== 'undefined') {
+                        UI.updateSourceLabel(nickname);
+                    }
+                }
+            });
+            // Load user playlists
+            loadUserPlaylists();
+        } else {
+            if (loginBtn) loginBtn.classList.remove('hidden');
+            if (userInfo) userInfo.classList.add('hidden');
+            var container = document.getElementById('netease-user-playlists');
+            if (container) container.innerHTML = '<div class="netease-empty">请先登录</div>';
+            // Reset source label
+            if (typeof UI !== 'undefined') {
+                UI.updateSourceLabel('网易云音乐');
+            }
+        }
+    }
+
+    // Restore login state
+    function restoreLogin() {
+        var savedCookie = localStorage.getItem('netease-cookie');
+        if (savedCookie) {
+            NetEaseAPI.setCookie(savedCookie);
+            isLoggedIn = true;
+            updateLoginUI();
+        }
+    }
+
+    // Format play count
+    function formatCount(count) {
+        if (!count) return '0';
+        if (count >= 100000000) return (count / 100000000).toFixed(1) + '亿';
+        if (count >= 10000) return (count / 10000).toFixed(1) + '万';
+        return String(count);
+    }
+
+    // Format duration
+    function formatDuration(ms) {
+        if (!ms) return '';
+        var sec = Math.floor(ms / 1000);
+        var min = Math.floor(sec / 60);
+        sec = sec % 60;
+        return min + ':' + (sec < 10 ? '0' : '') + sec;
+    }
+
+    function isVipUser() { return userIsVip; }
+
+    return {
+        init, hideSearchResults, restoreLogin, updateLoginUI,
+        playNeteaseTracks, loadPlaylistDetail, doSearch, getContextLabel,
+        updateQualityDisplay, isVipUser
+    };
+})();

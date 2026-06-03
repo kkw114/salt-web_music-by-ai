@@ -10,7 +10,7 @@ const App = (() => {
     let currentSubfolder = '';
     let localDirHandle = null;
     let localSubfolders = [];
-    let currentLabel = 'testmusic';
+    let currentLabel = 'SaltWeb';
 
     function fmtRate(r) {
         var s = r.toFixed(2);
@@ -164,14 +164,14 @@ const App = (() => {
         var lastSub = Settings.get('lastSubfolder') || '';
         var lastIdx = Settings.get('lastTrackIndex');
         debug('lastSrc=' + lastSrc + ' lastSub=' + lastSub + ' lastIdx=' + lastIdx);
-        if (lastSrc === 'default' && lastSub && lastSub.charAt(0) !== '/') {
+
+        // Always load default source first
+        if (lastSub && lastSub.charAt(0) !== '/') {
             currentSubfolder = lastSub;
-            currentLabel = lastSub || 'testmusic';
         } else {
             currentSubfolder = '';
-            currentLabel = 'testmusic';
         }
-        UI.updateSourceLabel(currentLabel);
+        UI.updateSourceLabel('SaltWeb');
         var _restoreSub = currentSubfolder;
         debug('loadFromServer, sub=' + currentSubfolder);
         loadFromServer().then(function() {
@@ -183,8 +183,18 @@ const App = (() => {
                 UI.renderSourceFolders(d.subfolders, d.totalCount, _restoreSub);
             });
         }).catch(function(e) { debug('server load FAILED: ' + (e && e.message)); });
+
+        // Restore source mode
+        if (lastSrc === 'netease') {
+            sourceMode = 'netease';
+            UI.updateSourceLabel('网易云音乐');
+            if (typeof NetEaseUI !== 'undefined') NetEaseUI.restoreLogin();
+        } else if (lastSrc === 'webdav') {
+            sourceMode = 'webdav';
+            debug('tryRestoreWebdav...');
+            tryRestoreWebdav();
+        }
         tryRestoreLocalFolder();
-        if (lastSrc === 'webdav') { debug('tryRestoreWebdav...'); tryRestoreWebdav(); }
     }
 
     function bindEvents() {
@@ -212,6 +222,19 @@ const App = (() => {
         els.btnTogglePlaylist.addEventListener('click', function() { UI.togglePlaylistPanel(); });
         document.getElementById('btn-close-playlist').addEventListener('click', function() { UI.togglePlaylistPanel(); });
 
+        // Double-click track info to copy song info
+        var trackInfo = document.querySelector('.track-info');
+        if (trackInfo) {
+            trackInfo.addEventListener('dblclick', function() {
+                copyTrackInfo();
+            });
+            // Right-click context menu
+            trackInfo.addEventListener('contextmenu', function(e) {
+                e.preventDefault();
+                showTrackContextMenu(e.clientX, e.clientY);
+            });
+        }
+
         var speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
         var btnSpeed = document.getElementById('btn-speed');
         btnSpeed.addEventListener('click', function() {
@@ -229,6 +252,10 @@ const App = (() => {
             UI.updatePlayButton(true);
             var t = PlaylistManager.getCurrentTrack();
             if (t) { UI.updateTrackInfo(t); UI.updateAlbumArt(t.coverUrl); }
+            // Update NetEase quality display
+            if (sourceMode === 'netease' && typeof NetEaseUI !== 'undefined') {
+                NetEaseUI.updateQualityDisplay(t);
+            }
         });
         AudioEngine.on('pause', function() { UI.updatePlayButton(false); });
         AudioEngine.on('timeupdate', function(d) { UI.updateProgress(d.current, d.duration); LyricsEngine.update(d.current * 1000); });
@@ -292,9 +319,6 @@ const App = (() => {
             if (!ctrl && e.code === 'ArrowRight') { e.preventDefault(); AudioEngine.seek(AudioEngine.getPosition() + 5); return; }
 
             switch (e.code) {
-                case 'Space': e.preventDefault(); AudioEngine.togglePlay(); break;
-                case 'KeyN': playNext(); break;
-                case 'KeyP': playPrev(); break;
                 case 'KeyM': UI.updateVolumeUI(AudioEngine.getVolume(), AudioEngine.toggleMute()); Settings.set('volume', Math.round(AudioEngine.getVolume() * 100)); break;
                 case 'KeyX': e.preventDefault(); var step = Settings.get('speedStep') || 0.05; var r = Math.max(0.5, AudioEngine.getRate() - step); AudioEngine.setRate(r); document.getElementById('btn-speed').textContent = fmtRate(r); Settings.set('rate', r); break;
                 case 'KeyC': e.preventDefault(); var step2 = Settings.get('speedStep') || 0.05; var r2 = AudioEngine.getRate() + step2; if (r2 > 2) r2 = 0.5; AudioEngine.setRate(r2); document.getElementById('btn-speed').textContent = fmtRate(r2); Settings.set('rate', r2); break;
@@ -307,7 +331,7 @@ const App = (() => {
     async function loadDefaultSource() {
         sourceMode = 'default';
         currentSubfolder = '';
-        currentLabel = 'testmusic';
+        currentLabel = 'SaltWeb';
         UI.updateSourceLabel(currentLabel);
         // Don't auto-load tracks - wait for user to pick a folder
     }
@@ -317,6 +341,7 @@ const App = (() => {
         Settings.set('lastSource', mode);
         UI.updateSourceTab(mode);
         if (mode === 'default') { loadDefaultSource(); }
+        else if (mode === 'netease') { UI.updateSourceLabel('网易云音乐'); }
         else if (mode === 'local') { if (localDirHandle) renderLocalFolders(); }
     }
 
@@ -327,10 +352,12 @@ const App = (() => {
         }
         if (sourceMode === 'default') {
             currentSubfolder = path || '';
-            UI.updateSourceLabel(currentSubfolder || 'testmusic');
+            UI.updateSourceLabel('SaltWeb');
+            UI.updateFolderName(currentSubfolder || '全部歌曲');
             loadFromServer();
         } else if (sourceMode === 'local') {
             currentSubfolder = path || '';
+            UI.updateFolderName(currentSubfolder || '全部歌曲');
             readLocalDir();
         }
     }
@@ -347,7 +374,7 @@ const App = (() => {
             }
             if (!Array.isArray(data) || !data.length) { UI.els.folderName.textContent = '未找到音乐文件'; return; }
             populateTracks(data);
-            UI.els.folderName.textContent = currentSubfolder || 'testmusic';
+            UI.updateFolderName(currentSubfolder || '全部歌曲');
         } catch(e) {
             var dEl4 = document.getElementById('debug-log');
             if (dEl4 && dEl4.style.display !== 'none') {
@@ -530,7 +557,10 @@ const App = (() => {
         localDirHandle = h;
         currentLabel = h.name;
         Settings.set('lastLocalFolder', h.name);
-        if (!silent) UI.updateSourceLabel(h.name);
+        if (!silent) {
+            UI.updateSourceLabel(h.name);
+            UI.updateFolderName('全部歌曲');
+        }
         sourceMode = 'local';
         currentSubfolder = '';
         localFileCache = {};
@@ -643,7 +673,7 @@ const App = (() => {
         firstLoad = !AudioEngine.getIsPlaying();
         PlaylistManager.setTracks(tracks);
         UI.showPlayer();
-        UI.els.folderName.textContent = label;
+        UI.updateFolderName(currentSubfolder || '全部歌曲');
         UI.renderPlaylist(tracks, -1);
         PlaylistManager.setCurrentIndexSilent(0);
     }
@@ -727,7 +757,7 @@ const App = (() => {
         firstLoad = !AudioEngine.getIsPlaying();
         PlaylistManager.setTracks(tracks);
         UI.showPlayer();
-        UI.els.folderName.textContent = currentSubfolder || localDirHandle.name;
+        UI.updateFolderName(currentSubfolder || '全部歌曲');
         UI.renderPlaylist(tracks, -1);
         PlaylistManager.setCurrentIndexSilent(0);
     }
@@ -839,6 +869,8 @@ const App = (() => {
                     var lastSub = Settings.get('lastSubfolder') || '';
                     var lastIdx = Settings.get('lastTrackIndex');
                     if (lastSub) currentSubfolder = lastSub;
+                    UI.updateSourceLabel(handle.name);
+                    UI.updateFolderName(currentSubfolder || '全部歌曲');
                     loadAllLocalMeta().then(function() {
                         selectSubfolder(currentSubfolder, true);
                         if (lastIdx >= 0 && lastIdx < PlaylistManager.length) {
@@ -1217,14 +1249,59 @@ const App = (() => {
         UI.updateTrackInfo(track);
         UI.updateAlbumArt(track.coverUrl);
         LyricsEngine.reset();
+
+        // Update NetEase quality display and re-fetch URL if quality changed
+        if (sourceMode === 'netease' && typeof NetEaseAPI !== 'undefined' && typeof NetEaseUI !== 'undefined') {
+            var currentQuality = Settings.get('neteaseQuality') || '320000';
+            var needRefetch = !track._lastQuality || track._lastQuality !== currentQuality;
+            if (needRefetch && track.neteaseId) {
+                track._lastQuality = currentQuality;
+                NetEaseAPI.getSongUrl(track.neteaseId).then(function(data) {
+                    if (data && data.data && data.data[0]) {
+                        var item = data.data[0];
+                        if (item.url) {
+                            track.url = item.url;
+                            track.bitrate = item.br || 0;
+                            // Log quality
+                            var dEl = document.getElementById('debug-log');
+                            if (dEl && dEl.style.display !== 'none') {
+                                dEl.textContent += '[NetEase] ' + track.title + ' | 音质:' + (item.br || '?') + 'kbps | 类型:' + (item.type || '?') + ' | 试听:' + (item.freeTrialInfo ? '是' : '否') + '\n';
+                                dEl.scrollTop = dEl.scrollHeight;
+                            }
+                            // Reload with new URL
+                            AudioEngine.play(track.url);
+                            NetEaseUI.updateQualityDisplay(track);
+                        }
+                    }
+                });
+            } else {
+                NetEaseUI.updateQualityDisplay(track);
+            }
+        }
+
+        // Load lyrics
         var lrcRef = null;
         if (sourceMode === 'local') lrcRef = lrcFileMap[track.file ? track.file.name : track.name];
         else if (sourceMode === 'webdav') lrcRef = lrcFileMap[track.name];
-        else lrcRef = lrcFileMap[track.name];
+        else if (sourceMode === 'netease') {
+            // Load lyrics from NetEase API
+            if (track.neteaseId && typeof NetEaseAPI !== 'undefined') {
+                NetEaseAPI.getLyric(track.neteaseId).then(function(data) {
+                    if (data && data.lrc && data.lrc.lyric) {
+                        var parsed = LyricsEngine.parseLRC(data.lrc.lyric);
+                        var trans = data.tlyric && data.tlyric.lyric ? LyricsEngine.parseLRC(data.tlyric.lyric).lyrics : null;
+                        LyricsEngine.setLyrics(parsed.lyrics, trans);
+                    }
+                });
+            }
+        } else lrcRef = lrcFileMap[track.name];
+
         if (lrcRef) {
             if (lrcRef instanceof File) lrcRef.text().then(function(t) { LyricsEngine.setLyrics(LyricsEngine.parseLRC(t).lyrics); }).catch(function() {});
             else if (typeof lrcRef === 'string') fetch(lrcRef).then(function(r) { return r.text(); }).then(function(t) { LyricsEngine.setLyrics(LyricsEngine.parseLRC(t).lyrics); }).catch(function() {});
         }
+
+        // Play track
         var src = track.url || track.file;
         if (firstLoad) { firstLoad = false; AudioEngine.load(src); }
         else AudioEngine.play(src);
@@ -1244,6 +1321,50 @@ const App = (() => {
                 else lrcFileMap[t.name] = f;
             }
         } catch(e) {}
+    }
+
+    function copyTrackInfo() {
+        var t = PlaylistManager.getCurrentTrack();
+        if (!t) return;
+        var text = t.title + ' - ' + t.artist;
+        navigator.clipboard.writeText(text).then(function() {
+            showToast('已复制: ' + text);
+        }).catch(function() {
+            showToast('复制失败');
+        });
+    }
+
+    function showTrackContextMenu(x, y) {
+        var t = PlaylistManager.getCurrentTrack();
+        if (!t) return;
+        var menu = document.getElementById('context-menu');
+        if (!menu) return;
+        menu.innerHTML = '<div class="context-menu-item" data-action="copy-track">复制歌曲信息</div>';
+        menu.style.left = x + 'px';
+        menu.style.top = y + 'px';
+        menu.classList.remove('hidden');
+        menu.querySelector('[data-action="copy-track"]').onclick = function() {
+            copyTrackInfo();
+            menu.classList.add('hidden');
+        };
+        setTimeout(function() {
+            document.addEventListener('click', function hideMenu() {
+                menu.classList.add('hidden');
+                document.removeEventListener('click', hideMenu);
+            });
+        }, 0);
+    }
+
+    function showToast(msg) {
+        var toast = document.createElement('div');
+        toast.className = 'toast-message';
+        toast.textContent = msg;
+        document.body.appendChild(toast);
+        setTimeout(function() { toast.classList.add('show'); }, 10);
+        setTimeout(function() {
+            toast.classList.remove('show');
+            setTimeout(function() { toast.remove(); }, 300);
+        }, 2000);
     }
 
     return {

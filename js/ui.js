@@ -230,7 +230,7 @@ const UI = (() => {
         if (track) {
             els.trackTitle.textContent = track.title || '未知曲目';
             els.trackArtist.textContent = track.artist || '未知艺术家';
-            els.trackAlbum.textContent = track.album || '';
+            els.trackAlbum.textContent = '';
             updateTitleSize();
         } else {
             els.trackTitle.textContent = '未在播放';
@@ -323,28 +323,35 @@ const UI = (() => {
         return 0;
     }
 
-    function renderPlaylist(tracks, currentIndex) {
+    function renderPlaylist(tracks, currentIndex, customLabel) {
         playlistOrigTracks = tracks || [];
-        playlistTracks = playlistOrigTracks.slice().sort(function(a, b) {
-            var an = String(a.title || a.name || '');
-            var bn = String(b.title || b.name || '');
-            var ca = getSortGroup(an), cb = getSortGroup(bn);
-            if (ca !== cb) return ca - cb;
-            return an.localeCompare(bn, 'zh-CN');
-        });
+        // Don't sort for NetEase mode - keep original order
+        var isNetEase = typeof App !== 'undefined' && App.sourceMode === 'netease';
+        if (isNetEase) {
+            playlistTracks = playlistOrigTracks.slice();
+        } else {
+            playlistTracks = playlistOrigTracks.slice().sort(function(a, b) {
+                var an = String(a.title || a.name || '');
+                var bn = String(b.title || b.name || '');
+                var ca = getSortGroup(an), cb = getSortGroup(bn);
+                if (ca !== cb) return ca - cb;
+                return an.localeCompare(bn, 'zh-CN');
+            });
+        }
         playlistCurrentIndex = (currentIndex >= 0 && tracks) ? playlistTracks.indexOf(tracks[currentIndex]) : -1;
-        var label = '';
-        if (typeof App !== 'undefined') {
-            label = (App.currentSubfolder || App.sourceMode === 'local' ? (App.currentSubfolder || '全部歌曲') : 'testmusic');
-            if (!label || label === 'testmusic') label = '全部歌曲';
+        var label = customLabel || '';
+        if (!label) {
+            // Use folder-name as label source
+            label = els.folderName.textContent || '全部歌曲';
         }
         els.playlistCount.textContent = label + ' · ' + playlistTracks.length + ' 首';
-        var dEl3 = document.getElementById('debug-log');
-        if (dEl3 && dEl3.style.display !== 'none') {
-            dEl3.textContent += '[renderPlaylist] sorted: ' + playlistTracks.length + ' origLen=' + playlistOrigTracks.length + '\n';
-        }
         renderPlaylistItems();
-        renderPlaylistIndex();
+        // Don't render index for NetEase mode
+        if (!isNetEase) {
+            renderPlaylistIndex();
+        } else {
+            if (els.playlistIndex) els.playlistIndex.innerHTML = '';
+        }
     }
 
     function renderPlaylistItems() {
@@ -533,7 +540,11 @@ const UI = (() => {
     }
 
     function updateSourceLabel(text) {
-        els.sourceLabel.textContent = text || 'testmusic';
+        els.sourceLabel.textContent = text || 'SaltWeb';
+    }
+
+    function updateFolderName(text) {
+        els.folderName.textContent = text || '';
     }
 
     function updateSourceTab(mode) {
@@ -609,9 +620,11 @@ const UI = (() => {
 
     function showSourceTabContent(mode) {
         document.getElementById('source-tab-default').classList.toggle('hidden', mode !== 'default');
+        document.getElementById('source-tab-netease').classList.toggle('hidden', mode !== 'netease');
         document.getElementById('source-tab-webdav').classList.toggle('hidden', mode !== 'webdav');
         document.getElementById('source-tab-local').classList.toggle('hidden', mode !== 'local');
         if (mode === 'webdav') { if (typeof App !== 'undefined' && App.loadWebdavSavedList) App.loadWebdavSavedList(); }
+        if (mode === 'netease' && typeof NetEaseUI !== 'undefined') { NetEaseUI.init(); NetEaseUI.restoreLogin(); }
     }
 
     // ==================== Idle Detection ====================
@@ -755,8 +768,47 @@ const UI = (() => {
                 group('倍速') +
                 '<div class="settings-row"><span class="settings-label">快捷键梯度</span><input type="text" id="speed-step-input" class="settings-select" style="width:60px;text-align:center" value="' + s.get('speedStep') + '"></div>' +
                 '<div class="settings-sep"></div>' +
+                group('快捷键') +
+                '<div class="elem-group"><div class="elem-group-header"><span>快捷键说明</span><svg class="elem-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="elem-group-body hidden">' +
+                '<div class="settings-shortcut-list">' +
+                '<div class="settings-shortcut-title">播放控制</div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">Space</span><span>播放/暂停</span></div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">Ctrl + ←</span><span>上一首</span></div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">Ctrl + →</span><span>下一首</span></div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">Ctrl + ↓</span><span>播放/暂停</span></div>' +
+                '<div class="settings-shortcut-title">进度与音量</div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">←</span><span>后退 5 秒</span></div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">→</span><span>前进 5 秒</span></div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">0-9</span><span>跳转到 0%-90%</span></div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">B</span><span>回到开头</span></div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">↑</span><span>音量 +10%</span></div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">↓</span><span>音量 -10%</span></div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">M</span><span>静音/取消静音</span></div>' +
+                '<div class="settings-shortcut-title">倍速调节</div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">X</span><span class="speed-step-desc">减速 (-' + s.get('speedStep') + 'x)</span></div>' +
+                '<div class="settings-shortcut-item"><span class="settings-shortcut-key">C</span><span class="speed-step-desc">加速 (+' + s.get('speedStep') + 'x)</span></div>' +
+                '</div>' +
+                '</div></div>' +
+                '<div class="settings-sep"></div>' +
                 group('字体') +
                 customFontRow(s.get('customFontFamily')) +
+                '<div class="settings-sep"></div>' +
+                group('网易云') +
+                selectGroup('neteaseQuality', [
+                    { value: '128000', label: '128kbps' },
+                    { value: '192000', label: '192kbps' },
+                    { value: '320000', label: '320kbps' },
+                    { value: 'flac', label: '无损' },
+                ], s.get('neteaseQuality'), '播放音质') +
+                '<div class="settings-hint">更高音质需要VIP权益，且消耗更多流量</div>' +
+                (typeof NetEaseUI !== 'undefined' && NetEaseUI.isVipUser() ?
+                    '<div class="settings-sep"></div>' +
+                    selectGroup('neteaseVipType', [
+                        { value: 'auto', label: '自动检测' },
+                        { value: 'none', label: '普通' },
+                        { value: 'vip', label: 'VIP' },
+                        { value: 'svip', label: 'SVIP' },
+                    ], s.get('neteaseVipType'), 'VIP状态修正') : '') +
                 '<div class="settings-sep"></div>' +
                 group('调试') +
                 '<div class="settings-row"><span class="settings-label">调试日志</span><input type="checkbox" class="settings-checkbox" id="debug-switch-settings"></div>';
@@ -839,7 +891,7 @@ const UI = (() => {
                 '<div class="settings-sep"></div>' +
                 elemSection('曲名', 'trackTitle', s, 'titleFontFamily', 'titleFontSize', 'titleFontWeight') +
                 '<div class="settings-sep"></div>' +
-                elemSection('歌手/专辑', 'trackArtist', s, 'artistFontFamily', 'artistFontSize', 'artistFontWeight') +
+                elemSection('歌手', 'trackArtist', s, 'artistFontFamily', 'artistFontSize', 'artistFontWeight') +
                 '</div></div>';
         }
 
@@ -907,10 +959,14 @@ const UI = (() => {
                         }
                     }
                 }
-                if (key === 'rectangleCover') {
-                    renderSettingsPanel('cover');
-                }
-            });
+                    if (key === 'rectangleCover') {
+                        renderSettingsPanel('cover');
+                    }
+                    // VIP type change: update UI immediately
+                    if (key === 'neteaseVipType' && typeof NetEaseUI !== 'undefined') {
+                        NetEaseUI.updateLoginUI();
+                    }
+                });
         });
 
         els.settingsContent.querySelectorAll('.settings-slider').forEach(sl => {
@@ -965,6 +1021,9 @@ const UI = (() => {
                     }
                     if (key === 'rectangleCover') {
                         renderSettingsPanel('cover');
+                    }
+                    if (key === 'neteaseVipType') {
+                        if (typeof NetEaseUI !== 'undefined') NetEaseUI.updateLoginUI();
                     }
                 });
             });
@@ -1100,7 +1159,15 @@ const UI = (() => {
         var speedStepInput = document.getElementById('speed-step-input');
         if (speedStepInput) speedStepInput.addEventListener('input', () => {
             var v = parseFloat(speedStepInput.value);
-            if (!isNaN(v) && v > 0 && v <= 1) Settings.set('speedStep', v);
+            if (!isNaN(v) && v > 0 && v <= 1) {
+                Settings.set('speedStep', v);
+                // Update shortcut description in real-time
+                document.querySelectorAll('.speed-step-desc').forEach(el => {
+                    var text = el.textContent;
+                    if (text.startsWith('减速')) el.textContent = '减速 (-' + v + 'x)';
+                    else if (text.startsWith('加速')) el.textContent = '加速 (+' + v + 'x)';
+                });
+            }
         });
     }
 
@@ -1181,6 +1248,7 @@ const UI = (() => {
         initSourceEvents,
         toggleSourcePanel,
         updateSourceLabel,
+        updateFolderName,
         updateSourceTab,
         renderSourceFolders,
         updateTitleSize,

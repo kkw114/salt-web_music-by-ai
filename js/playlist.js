@@ -92,12 +92,8 @@ const PlaylistManager = (() => {
         } else {
             currentIndex++;
             if (currentIndex >= tracks.length) {
-                if (repeatMode === 'all') {
-                    currentIndex = 0;
-                } else {
-                    currentIndex = tracks.length - 1;
-                    return -1; // end of playlist
-                }
+                // Loop back to start in all modes
+                currentIndex = 0;
             }
         }
 
@@ -119,7 +115,8 @@ const PlaylistManager = (() => {
         } else {
             currentIndex--;
             if (currentIndex < 0) {
-                currentIndex = repeatMode === 'all' ? tracks.length - 1 : 0;
+                // Loop to end in all modes
+                currentIndex = tracks.length - 1;
             }
         }
 
