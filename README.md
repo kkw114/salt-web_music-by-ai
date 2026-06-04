@@ -1,4 +1,5 @@
-# SaltLink
+# SaltPlayer
+（ai撰写仅供参考）
 
 一个基于 Node.js 的网页音乐播放器，支持本地音乐播放和网易云音乐在线播放。
 
@@ -116,6 +117,12 @@ SaltLink/
 | 界面设置 | 浏览器 localStorage (rnp-settings) |
 | 网易云登录态 | 浏览器 localStorage (netease-cookie) |
 | 音乐目录/端口 | 环境变量或 .env 文件 |
+
+## 鸣谢
+Refined Now Playing（一个美化网易云音乐播放界面的 BetterNCM 插件）：https://github.com/solstice23/refined-now-playing-netease
+
+YesPlayMusic（高颜值的第三方网易云播放器）：https://github.com/qier222/YesPlayMusic
+
 
 ## 许可证
 
