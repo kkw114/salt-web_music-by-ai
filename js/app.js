@@ -10,7 +10,7 @@ const App = (() => {
     let currentSubfolder = '';
     let localDirHandle = null;
     let localSubfolders = [];
-    let currentLabel = 'SaltWeb';
+    let currentLabel = 'SaltLink';
 
     function fmtRate(r) {
         var s = r.toFixed(2);
@@ -163,42 +163,106 @@ const App = (() => {
         var lastSrc = Settings.get('lastSource') || 'default';
         var lastSub = Settings.get('lastSubfolder') || '';
         var lastIdx = Settings.get('lastTrackIndex');
-        debug('lastSrc=' + lastSrc + ' lastSub=' + lastSub + ' lastIdx=' + lastIdx);
+        var forceDefault = localStorage.getItem('salt-force-default') === '1';
+        if (forceDefault) {
+            lastSrc = 'default';
+            lastIdx = -1;
+            localStorage.removeItem('salt-force-default');
+        }
+        var dailyAsDefault = Settings.get('neteaseDefaultDaily') && !forceDefault;
+        debug('lastSrc=' + lastSrc + ' lastSub=' + lastSub + ' lastIdx=' + lastIdx + ' dailyAsDefault=' + dailyAsDefault);
 
-        // Always load default source first
+        // If daily recommend as default, skip loading default source
+        if (dailyAsDefault) {
+            sourceMode = 'netease';
+            UI.updateSourceLabel('网易云音乐');
+            UI.showPlayer();
+            // Show loading state
+            UI.updateTrackInfo({ title: '加载每日推荐...', artist: '网易云音乐' });
+            // Load folder list in background
+            fetch('/api/folders').then(function(r) { return r.json(); }).then(function(d) {
+                UI.renderSourceFolders(d.subfolders, d.totalCount, '');
+            });
+            // Switch to netease tab and load daily
+            if (typeof NetEaseUI !== 'undefined') {
+                NetEaseUI.restoreLogin();
+                UI.updateSourceTab('netease');
+                setTimeout(function() {
+                    NetEaseUI.loadDailyRecommend().then(function() {
+                        NetEaseAPI.getDailyRecommend().then(function(data) {
+                            if (data && data.data && data.data.dailySongs) {
+                                var tracks = data.data.dailySongs;
+                                var today = new Date();
+                                var dateStr = (today.getMonth() + 1) + '月' + today.getDate() + '日';
+                                NetEaseUI.playNeteaseTracks(tracks, 0, '每日推荐 · ' + dateStr);
+                            }
+                        });
+                    });
+                }, 500);
+            }
+            return;
+        }
+
+        // If last source was webdav or netease, check if valid
+        if (lastSrc === 'webdav' || lastSrc === 'netease') {
+            if (lastSrc === 'netease') {
+                // Check if logged in
+                var neCookie = localStorage.getItem('netease-cookie') || localStorage.getItem('netease-music-u');
+                if (!neCookie && !dailyAsDefault) {
+                    // Not logged in, fall back to default
+                    lastSrc = 'default';
+                    Settings.set('lastSource', 'default');
+                } else {
+                    sourceMode = 'netease';
+                    UI.updateSourceLabel('网易云音乐');
+                    if (typeof NetEaseUI !== 'undefined') NetEaseUI.restoreLogin();
+                    tryRestoreLocalFolder();
+                    return;
+                }
+            } else {
+                sourceMode = 'webdav';
+                debug('tryRestoreWebdav...');
+                tryRestoreWebdav();
+                tryRestoreLocalFolder();
+                return;
+            }
+        }
+
+        // Load default source
         if (lastSub && lastSub.charAt(0) !== '/') {
             currentSubfolder = lastSub;
         } else {
             currentSubfolder = '';
         }
-        UI.updateSourceLabel('SaltWeb');
+            UI.updateSourceLabel('SaltLink');
         var _restoreSub = currentSubfolder;
         debug('loadFromServer, sub=' + currentSubfolder);
         loadFromServer().then(function() {
             debug('server loaded, tracks=' + PlaylistManager.length);
-            if (lastSrc === 'default' && lastIdx >= 0 && lastIdx < PlaylistManager.length) {
+            if (lastIdx >= 0 && lastIdx < PlaylistManager.length) {
                 PlaylistManager.setCurrentIndexSilent(lastIdx);
             }
             fetch('/api/folders').then(function(r) { return r.json(); }).then(function(d) {
                 UI.renderSourceFolders(d.subfolders, d.totalCount, _restoreSub);
             });
         }).catch(function(e) { debug('server load FAILED: ' + (e && e.message)); });
-
-        // Restore source mode
-        if (lastSrc === 'netease') {
-            sourceMode = 'netease';
-            UI.updateSourceLabel('网易云音乐');
-            if (typeof NetEaseUI !== 'undefined') NetEaseUI.restoreLogin();
-        } else if (lastSrc === 'webdav') {
-            sourceMode = 'webdav';
-            debug('tryRestoreWebdav...');
-            tryRestoreWebdav();
-        }
         tryRestoreLocalFolder();
     }
 
     function bindEvents() {
         var els = UI.els;
+
+        // Fix position button
+        var fixBtn = document.getElementById('btn-fix-position');
+        if (fixBtn) {
+            fixBtn.addEventListener('click', function() {
+                localStorage.setItem('salt-force-default', '1');
+                // Disable daily recommend as default page
+                Settings.set('neteaseDefaultDaily', false);
+                location.reload();
+            });
+        }
+
         els.btnPlay.addEventListener('click', function() { AudioEngine.togglePlay(); });
         els.btnNext.addEventListener('click', function() { playNext(); });
         els.btnPrev.addEventListener('click', function() { playPrev(); });
@@ -267,6 +331,7 @@ const App = (() => {
         PlaylistManager.on('trackchange', function(track) {
             if (track) {
                 Settings.set('lastTrackIndex', PlaylistManager.currentIndex);
+                Settings.set('lastTrackName', track.title || track.name || '');
                 loadAndPlayTrack(track);
             }
         });
@@ -331,7 +396,7 @@ const App = (() => {
     async function loadDefaultSource() {
         sourceMode = 'default';
         currentSubfolder = '';
-        currentLabel = 'SaltWeb';
+            currentLabel = 'SaltLink';
         UI.updateSourceLabel(currentLabel);
         // Don't auto-load tracks - wait for user to pick a folder
     }
@@ -352,7 +417,7 @@ const App = (() => {
         }
         if (sourceMode === 'default') {
             currentSubfolder = path || '';
-            UI.updateSourceLabel('SaltWeb');
+        UI.updateSourceLabel('SaltLink');
             UI.updateFolderName(currentSubfolder || '全部歌曲');
             loadFromServer();
         } else if (sourceMode === 'local') {
@@ -421,26 +486,36 @@ const App = (() => {
         var activeUrl = Settings.get('lastWebdavUrl') || '';
         if (!activeUrl) return;
         var list = Settings.get('webdavConnections') || [];
-        var lastSub = Settings.get('lastSubfolder') || '';
+        var lastSub = Settings.get('lastWebdavFolder') || Settings.get('lastSubfolder') || '';
         var lastIdx = Settings.get('lastTrackIndex');
+        var lastTrackName = Settings.get('lastTrackName') || '';
         for (var i = 0; i < list.length; i++) {
             if (list[i].url === activeUrl) {
+                var connName = list[i].name || activeUrl.replace(/https?:\/\//, '').split('/')[0];
+                UI.updateSourceLabel(connName);
+                UI.updateSourceTab('webdav');
                 doWebdavConnect(list[i].url, list[i].username, list[i].password, list[i].name).then(function(ok) {
                     if (!ok) return;
-                    UI.updateSourceTab('webdav');
-                    // Poll for webdavRootData to be set (root load complete)
+                    // Load root folder first
+                    loadWebdavFolder('');
+                    // Poll for root to finish loading
                     var poll = setInterval(function() {
                         if (webdavRootData && webdavRootData.subfolders) {
                             clearInterval(poll);
-                            // Restore subfolder highlight
-                            if (lastSub && lastSub !== webdavBasePath()) {
-                                currentSubfolder = lastSub;
-                                loadWebdavFolder(lastSub);
-                            }
-                            // Restore track index
-                            if (lastIdx >= 0 && lastIdx < PlaylistManager.length) {
-                                PlaylistManager.setCurrentIndexSilent(lastIdx);
-                            }
+                            // Wait 2s then restore subfolder
+                            setTimeout(function() {
+                                if (lastSub && lastSub !== webdavBasePath()) {
+                                    currentSubfolder = lastSub;
+                                    var folderName = 'WebDAV · ' + (lastSub.split('/').filter(Boolean).pop() || '全部歌曲');
+                                    UI.updateFolderName(folderName);
+                                    loadWebdavFolder(lastSub).then(function() {
+                                        restoreWebdavTrack(lastTrackName, lastIdx);
+                                    });
+                                } else {
+                                    UI.updateFolderName('全部歌曲');
+                                    restoreWebdavTrack(lastTrackName, lastIdx);
+                                }
+                            }, 2000);
                         }
                     }, 200);
                     setTimeout(function() { clearInterval(poll); }, 30000);
@@ -1075,7 +1150,29 @@ const App = (() => {
         } catch(e) { return ''; }
     }
 
+    function restoreWebdavTrack(trackName, lastIdx) {
+        if (trackName) {
+            var foundIdx = -1;
+            for (var ti = 0; ti < PlaylistManager.length; ti++) {
+                var t = PlaylistManager.tracks[ti];
+                if (t && (t.name === trackName || t.title === trackName)) {
+                    foundIdx = ti; break;
+                }
+            }
+            if (foundIdx >= 0) {
+                PlaylistManager.setCurrentIndexSilent(foundIdx);
+            } else if (lastIdx >= 0 && lastIdx < PlaylistManager.length) {
+                PlaylistManager.setCurrentIndexSilent(lastIdx);
+            }
+        } else if (lastIdx >= 0 && lastIdx < PlaylistManager.length) {
+            PlaylistManager.setCurrentIndexSilent(lastIdx);
+        }
+    }
+
     async function loadWebdavFolder(folderPath) {
+        currentSubfolder = folderPath;
+        Settings.set('lastWebdavFolder', folderPath);
+        var displayName = folderPath ? (folderPath.split('/').filter(Boolean).pop() || '全部歌曲') : '全部歌曲';
         UI.els.folderName.textContent = '加载中...';
         try {
             // If clicking a subfolder (not root), load only that folder's tracks
@@ -1237,8 +1334,9 @@ const App = (() => {
         firstLoad = true;
         PlaylistManager.setTracks(tracks);
         UI.showPlayer();
-        UI.els.folderName.textContent = folderPath || 'WebDAV';
-        UI.renderPlaylist(tracks, -1);
+        var displayName = folderPath ? ('WebDAV · ' + folderPath.split('/').filter(Boolean).pop()) : '全部歌曲';
+        UI.els.folderName.textContent = displayName;
+        UI.renderPlaylist(tracks, -1, displayName);
         PlaylistManager.setCurrentIndexSilent(0);
     }
 
@@ -1289,8 +1387,17 @@ const App = (() => {
                 NetEaseAPI.getLyric(track.neteaseId).then(function(data) {
                     if (data && data.lrc && data.lrc.lyric) {
                         var parsed = LyricsEngine.parseLRC(data.lrc.lyric);
-                        var trans = data.tlyric && data.tlyric.lyric ? LyricsEngine.parseLRC(data.tlyric.lyric).lyrics : null;
-                        LyricsEngine.setLyrics(parsed.lyrics, trans);
+                        // Merge translation into lyrics
+                        if (data.tlyric && data.tlyric.lyric) {
+                            var transParsed = LyricsEngine.parseLRC(data.tlyric.lyric);
+                            if (transParsed && transParsed.lyrics) {
+                                transParsed.lyrics.forEach(function(t) {
+                                    var match = parsed.lyrics.find(function(l) { return Math.abs(l.time - t.time) < 100; });
+                                    if (match) match.translation = t.original;
+                                });
+                            }
+                        }
+                        LyricsEngine.setLyrics(parsed.lyrics);
                     }
                 });
             }
@@ -1339,14 +1446,28 @@ const App = (() => {
         if (!t) return;
         var menu = document.getElementById('context-menu');
         if (!menu) return;
-        menu.innerHTML = '<div class="context-menu-item" data-action="copy-track">复制歌曲信息</div>';
+        var isNetEase = sourceMode === 'netease' && t.neteaseId;
+        var html = '<div class="context-menu-item" data-action="copy-track">复制歌曲信息</div>';
+        if (isNetEase) {
+            html += '<div class="context-menu-item" data-action="copy-share-link">复制分享链接</div>';
+        }
+        menu.innerHTML = html;
         menu.style.left = x + 'px';
         menu.style.top = y + 'px';
         menu.classList.remove('hidden');
-        menu.querySelector('[data-action="copy-track"]').onclick = function() {
-            copyTrackInfo();
-            menu.classList.add('hidden');
-        };
+        menu.querySelectorAll('.context-menu-item').forEach(function(item) {
+            item.onclick = function() {
+                if (item.dataset.action === 'copy-track') {
+                    copyTrackInfo();
+                } else if (item.dataset.action === 'copy-share-link') {
+                    var link = 'https://music.163.com/song?id=' + t.neteaseId;
+                    navigator.clipboard.writeText(link).then(function() {
+                        showToast('已复制: ' + link);
+                    });
+                }
+                menu.classList.add('hidden');
+            };
+        });
         setTimeout(function() {
             document.addEventListener('click', function hideMenu() {
                 menu.classList.add('hidden');

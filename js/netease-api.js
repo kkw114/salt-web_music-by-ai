@@ -28,6 +28,15 @@ const NetEaseAPI = (() => {
     function getCookieParam() {
         var musicU = localStorage.getItem('netease-music-u');
         var csrf = localStorage.getItem('netease-csrf');
+        // Fallback: try to extract from full cookie
+        if (!musicU && fullCookie) {
+            musicU = extractCookie(fullCookie, 'MUSIC_U');
+            if (musicU) localStorage.setItem('netease-music-u', musicU);
+        }
+        if (!csrf && fullCookie) {
+            csrf = extractCookie(fullCookie, '__csrf');
+            if (csrf) localStorage.setItem('netease-csrf', csrf);
+        }
         if (!musicU) return '';
         var cookie = 'MUSIC_U=' + musicU;
         if (csrf) cookie += ';__csrf=' + csrf;
@@ -149,6 +158,26 @@ const NetEaseAPI = (() => {
         return request(BASE + '/album?id=' + id + getCookieParam());
     }
 
+    async function getDailyRecommend() {
+        return request(BASE + '/recommend/songs?' + getCookieParam().substring(1));
+    }
+
+    async function likeSong(id, like) {
+        var musicU = localStorage.getItem('netease-music-u');
+        if (!musicU && fullCookie) {
+            musicU = extractCookie(fullCookie, 'MUSIC_U');
+        }
+        return request(BASE + '/like', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: Number(id), like: like === true, cookie: musicU ? 'MUSIC_U=' + musicU + ';' : '' })
+        });
+    }
+
+    async function getLikelist(uid) {
+        return request(BASE + '/likelist?uid=' + uid + getCookieParam());
+    }
+
     function convertTrack(track) {
         var artistNames = '';
         if (track.ar && track.ar.length) {
@@ -173,6 +202,11 @@ const NetEaseAPI = (() => {
         if (coverUrl) {
             proxyCoverUrl = BASE + '/cover?url=' + encodeURIComponent(coverUrl + '?param=300y300');
         }
+        // High quality cover for download
+        var hqCoverUrl = null;
+        if (coverUrl) {
+            hqCoverUrl = BASE + '/cover?url=' + encodeURIComponent(coverUrl + '?param=1200y1200');
+        }
         return {
             id: track.id,
             name: track.name,
@@ -180,6 +214,7 @@ const NetEaseAPI = (() => {
             artist: artistNames || '未知艺术家',
             album: albumName || '未知专辑',
             coverUrl: proxyCoverUrl,
+            hqCoverUrl: hqCoverUrl,
             hasCover: !!coverUrl,
             duration: track.dt || track.duration || 0,
             neteaseId: track.id,
@@ -220,6 +255,7 @@ const NetEaseAPI = (() => {
         getPlaylistDetail, getPersonalized, getToplist, getTopPlaylist,
         getQrKey, createQrCode, checkQrStatus, loginWithPhone,
         getUserAccount, getUserPlaylist, refreshLogin, getArtist, getAlbum,
+        getDailyRecommend, likeSong, getLikelist,
         convertTrack, parseLRC, getCookie, setCookie
     };
 })();

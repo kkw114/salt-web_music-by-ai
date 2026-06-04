@@ -12,6 +12,25 @@ const AudioEngine = (() => {
     let currentRate = 1;
     let updateInterval = null;
 
+    // Song cache to avoid reloading
+    const songCache = new Map();
+    const CACHE_MAX = 50;
+
+    function getCachedUrl(url) {
+        return songCache.get(url) || null;
+    }
+
+    function cacheSongUrl(originalUrl, blobUrl) {
+        if (songCache.size >= CACHE_MAX) {
+            // Remove oldest entry
+            var firstKey = songCache.keys().next().value;
+            var oldUrl = songCache.get(firstKey);
+            if (oldUrl) URL.revokeObjectURL(oldUrl);
+            songCache.delete(firstKey);
+        }
+        songCache.set(originalUrl, blobUrl);
+    }
+
     // Event callbacks
     const listeners = {
         play: [],
@@ -49,6 +68,11 @@ const AudioEngine = (() => {
             currentObjectUrl = url;
         } else if (typeof source === 'string') {
             url = source;
+            // Check cache for URL-based sources
+            var cached = getCachedUrl(url);
+            if (cached) {
+                url = cached;
+            }
         } else {
             return;
         }
@@ -76,6 +100,11 @@ const AudioEngine = (() => {
                 emit('load', {
                     duration: sound.duration()
                 });
+                // Cache URL-based sources
+                if (source && typeof source === 'string' && !getCachedUrl(source)) {
+                    // Store original URL mapping for cache
+                    songCache.set(source, url);
+                }
             },
             onloaderror: (id, err) => {
                 console.error('Load error:', err);
@@ -211,10 +240,23 @@ const AudioEngine = (() => {
         stopTimeUpdate();
         updateInterval = setInterval(() => {
             if (sound && isPlaying && !isSeeking) {
+                var current = sound.seek();
+                var duration = sound.duration();
                 emit('timeupdate', {
-                    current: sound.seek(),
-                    duration: sound.duration()
+                    current: current,
+                    duration: duration
                 });
+                // Detect end if near the end and not progressing
+                if (duration > 0 && current > 0 && current >= duration - 0.5) {
+                    // Let onend handle it naturally, but force if stuck
+                    setTimeout(function() {
+                        if (sound && isPlaying && sound.seek() >= duration - 0.3) {
+                            isPlaying = false;
+                            stopTimeUpdate();
+                            emit('end');
+                        }
+                    }, 1000);
+                }
             }
         }, 50); // ~20fps update
     }

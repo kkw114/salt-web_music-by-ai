@@ -205,24 +205,24 @@ if (neteaseApi) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // Artist hot songs
-    app.get('/api/netease/artists', async (req, res) => {
+    // Like/unlike a song
+    app.post('/api/netease/like', async (req, res) => {
         try {
-            const { id } = req.query;
+            const { id, like, cookie } = req.body;
             if (!id) return res.status(400).json({ error: 'id required' });
-            const cookie = getCookieFromReq(req);
-            const result = await proxyNeteaseApi('artists', { id: Number(id), cookie });
+            const cookieStr = cookie || getCookieFromReq(req);
+            const result = await proxyNeteaseApi('like', { id: Number(id), like: like !== false && like !== 'false', cookie: cookieStr, timestamp: Date.now() });
             res.json(result);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // Album detail
-    app.get('/api/netease/album', async (req, res) => {
+    // Get user liked songs IDs
+    app.get('/api/netease/likelist', async (req, res) => {
         try {
-            const { id } = req.query;
-            if (!id) return res.status(400).json({ error: 'id required' });
+            const { uid } = req.query;
+            if (!uid) return res.status(400).json({ error: 'uid required' });
             const cookie = getCookieFromReq(req);
-            const result = await proxyNeteaseApi('album', { id: Number(id), cookie });
+            const result = await proxyNeteaseApi('likelist', { uid: Number(uid), cookie, timestamp: Date.now() });
             res.json(result);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
@@ -239,7 +239,6 @@ if (neteaseApi) {
             const mod = isHttps ? https : http;
             mod.get(targetUrl, { headers: { 'Referer': 'https://music.163.com/' } }, (proxyRes) => {
                 if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-                    // Follow redirect
                     mod.get(proxyRes.headers.location, (redirectRes) => {
                         res.set('Content-Type', redirectRes.headers['content-type'] || 'image/jpeg');
                         res.set('Cache-Control', 'public, max-age=86400');
@@ -252,6 +251,33 @@ if (neteaseApi) {
                 proxyRes.pipe(res);
             }).on('error', () => res.status(404).end());
         } catch (e) { res.status(404).end(); }
+    });
+
+    // Proxy download for NetEase songs
+    app.get('/api/netease/download', async (req, res) => {
+        try {
+            const { url, filename } = req.query;
+            if (!url) return res.status(400).end();
+            const https = require('https');
+            const http = require('http');
+            const targetUrl = decodeURIComponent(url);
+            const isHttps = targetUrl.startsWith('https');
+            const mod = isHttps ? https : http;
+            const safeName = (filename || 'song').replace(/[\/\\:*?"<>|]/g, '_');
+            mod.get(targetUrl, { headers: { 'Referer': 'https://music.163.com/' } }, (proxyRes) => {
+                if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+                    mod.get(proxyRes.headers.location, (redirectRes) => {
+                        res.set('Content-Type', redirectRes.headers['content-type'] || 'audio/mpeg');
+                        res.set('Content-Disposition', 'attachment; filename="' + encodeURIComponent(safeName) + '"');
+                        redirectRes.pipe(res);
+                    }).on('error', () => res.status(500).end());
+                    return;
+                }
+                res.set('Content-Type', proxyRes.headers['content-type'] || 'audio/mpeg');
+                res.set('Content-Disposition', 'attachment; filename="' + encodeURIComponent(safeName) + '"');
+                proxyRes.pipe(res);
+            }).on('error', () => res.status(500).end());
+        } catch (e) { res.status(500).end(); }
     });
 
     console.log('NetEase API routes registered at /api/netease/*');

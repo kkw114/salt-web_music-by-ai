@@ -16,8 +16,10 @@ const Settings = (() => {
     rectangleCover: true,
     coverBlurryShadow: true,
     horizontalAlign: 'center',
+    immersiveColor: 'off', // off, primary, secondary, tertiary
     coverRotate: false,
     coverRotateSpeed: 20,
+    coverSize: 200,
 
     // Background
     bgType: 'blur',
@@ -29,6 +31,10 @@ const Settings = (() => {
     gradientDim: 55, gradientOpacity: 100,
     solidDim: 55, solidOpacity: 100,
     noneDim: 55, noneOpacity: 100,
+    dynamicGradientDim: 40, dynamicGradientOpacity: 100,
+    dynamicGradientSpeed: 15, dynamicGradientBlur: 20,
+    dynamicGradientDarken: 30,
+    dynamicGradientFilterBright: true,
     solidColor: '#1a1a2e',
     solidFollowAccent: false,
     rotateBgSpeed: 15,
@@ -71,6 +77,13 @@ const Settings = (() => {
     trackArtistGlow: false,
     trackArtistShadow: false,
 
+    // Mobile lyrics
+    mobileLyricSize: 13,
+    mobileLyricWeight: 500,
+    mobileTransSize: 10,
+    mobileTransWeight: 400,
+    mobileLineSpacing: 4,
+
     // Playback
     volume: 80,
     rate: 1,
@@ -84,6 +97,7 @@ const Settings = (() => {
     // NetEase
     neteaseQuality: '320000',
     neteaseVipType: 'auto', // auto, vip, svip
+    neteaseDefaultDaily: false,
   };
 
   let settings = {};
@@ -159,8 +173,8 @@ const Settings = (() => {
     b.classList.toggle('progress-bottom', get('progressBottom'));
 
     // Background
-    b.classList.remove('rnp-bg-blur', 'rnp-bg-gradient', 'rnp-bg-fluid', 'rnp-bg-solid', 'rnp-bg-none');
-    b.classList.add(`rnp-bg-${get('bgType')}`);
+        b.classList.remove('rnp-bg-blur', 'rnp-bg-gradient', 'rnp-bg-fluid', 'rnp-bg-solid', 'rnp-bg-none', 'rnp-bg-dynamic-gradient');
+        b.classList.add(`rnp-bg-${get('bgType')}`);
 
     // Cover
     b.classList.toggle('rectangle-cover', get('rectangleCover'));
@@ -197,6 +211,7 @@ const Settings = (() => {
     var t = get('bgType');
     root.style.setProperty('--bg-dim', get(t + 'Dim') / 100);
     root.style.setProperty('--bg-opacity', get(t + 'Opacity') / 100);
+    root.style.setProperty('--accent-overlay', get(t + 'Accent') / 100);
     root.style.setProperty('--solid-bg-color', get('solidColor'));
     root.style.setProperty('--rotate-bg-speed', get('rotateBgSpeed') + 's');
     root.style.setProperty('--rotate-bg-blur', get('rotateBgBlur') + 'px');
@@ -204,7 +219,13 @@ const Settings = (() => {
     root.style.setProperty('--fluid-bg-blur', get('fluidBgBlur') + 'px');
     root.style.setProperty('--fluid-bg-speed', get('fluidBgSpeed') + 's');
     root.style.setProperty('--cover-rotate-speed', get('coverRotateSpeed') + 's');
-    root.style.setProperty('--font-size-lyric', `${get('lyricFontSize')}px`);
+        root.style.setProperty('--dynamic-gradient-speed', get('dynamicGradientSpeed') + 's');
+        root.style.setProperty('--dynamic-gradient-blur', get('dynamicGradientBlur') + 'px');
+        root.style.setProperty('--dynamic-gradient-dim', get('dynamicGradientDim') / 100);
+        root.style.setProperty('--dynamic-gradient-opacity', get('dynamicGradientOpacity') / 100);
+        root.style.setProperty('--dynamic-gradient-darken', get('dynamicGradientDarken') / 100);
+        root.style.setProperty('--cover-size', get('coverSize') + 'px');
+        root.style.setProperty('--font-size-lyric', `${get('lyricFontSize')}px`);
     root.style.setProperty('--lyric-alignment', `${get('lyricAlignment')}%`);
     root.style.setProperty('--rnp-lyric-weight', get('lyricFontWeight'));
     root.style.setProperty('--font-size-trans', `${get('transFontSize')}px`);
@@ -212,9 +233,14 @@ const Settings = (() => {
     root.style.setProperty('--lyric-line-spacing', `${get('lyricLineSpacing')}px`);
     root.style.setProperty('--title-font-size', `${get('titleFontSize')}px`);
     root.style.setProperty('--title-font-weight', get('titleFontWeight'));
-    root.style.setProperty('--artist-font-size', `${get('artistFontSize')}px`);
-    root.style.setProperty('--artist-font-weight', get('artistFontWeight'));
-    var family = get('customFontFamily');
+        root.style.setProperty('--artist-font-size', `${get('artistFontSize')}px`);
+        root.style.setProperty('--artist-font-weight', get('artistFontWeight'));
+        root.style.setProperty('--mobile-lyric-size', get('mobileLyricSize') + 'px');
+        root.style.setProperty('--mobile-lyric-weight', get('mobileLyricWeight'));
+        root.style.setProperty('--mobile-trans-size', get('mobileTransSize') + 'px');
+        root.style.setProperty('--mobile-trans-weight', get('mobileTransWeight'));
+        root.style.setProperty('--mobile-line-spacing', get('mobileLineSpacing') + 'px');
+        var family = get('customFontFamily');
     if (family) {
       root.style.setProperty('--rnp-custom-font-family', family);
       document.body.classList.add('rnp-custom-font');

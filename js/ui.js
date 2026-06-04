@@ -166,6 +166,26 @@ const UI = (() => {
         } else if (bgType === 'gradient' && imageUrl) {
             els.bgBlur.style.backgroundImage = 'url(' + imageUrl + ')';
             els.bgBlur.style.backgroundSize = 'cover';
+        } else if (bgType === 'dynamic-gradient' && imageUrl) {
+            // Dynamic gradient: use stored palette with optional bright color filter
+            var palette = window._rnpPalette;
+            if (palette && palette.length >= 2) {
+                var filterBright = typeof Settings !== 'undefined' && Settings.get('dynamicGradientFilterBright');
+                var filteredPalette = palette;
+                if (filterBright) {
+                    filteredPalette = palette.filter(function(c) {
+                        var lum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+                        return lum < 200 && lum > 30;
+                    });
+                    if (filteredPalette.length < 2) filteredPalette = palette;
+                }
+                var gradient = ColorUtils.getGradientFromPalette(filteredPalette);
+                els.bgBlur.style.backgroundImage = gradient;
+                els.bgBlur.style.backgroundSize = '400% 400%';
+            } else {
+                els.bgBlur.style.backgroundImage = 'url(' + imageUrl + ')';
+                els.bgBlur.style.backgroundSize = 'cover';
+            }
         } else if (bgType === 'fluid' && imageUrl) {
             els.bgBlur.style.backgroundImage = 'none';
             var fluid = document.createElement('div');
@@ -217,6 +237,8 @@ const UI = (() => {
             } else {
                 els.albumGlow.style.background = 'none';
             }
+            // Store palette for dynamic gradient
+            window._rnpPalette = colors.palette;
             updateBackground(img.src, colors.palette);
             updateTitleSize();
         } catch(ex) {
@@ -298,6 +320,8 @@ const UI = (() => {
     function updateVolumeUI(volume, muted) {
         var pct = muted ? 0 : volume;
         els.volumePct.textContent = Math.round(pct * 100) + '%';
+        var fillEl = document.getElementById('volume-bar-fill');
+        if (fillEl) fillEl.style.height = Math.round(pct * 100) + '%';
         if (muted || volume === 0) {
             els.iconVolume.classList.add('hidden');
             els.iconMuted.classList.remove('hidden');
@@ -309,6 +333,17 @@ const UI = (() => {
 
     function initVolumeUI() {
         updateVolumeUI(0.8, false);
+        // Volume bar click handler
+        var barTrack = document.querySelector('.volume-bar-track');
+        if (barTrack) {
+            barTrack.addEventListener('click', function(e) {
+                var rect = barTrack.getBoundingClientRect();
+                var pct = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height));
+                AudioEngine.setVolume(pct);
+                updateVolumeUI(pct, false);
+                Settings.set('volume', Math.round(pct * 100));
+            });
+        }
     }
 
     // Render playlist
@@ -360,25 +395,49 @@ const UI = (() => {
             els.playlistList.innerHTML = '<div style="padding:24px;text-align:center;color:rgba(255,255,255,0.3);font-size:13px">无匹配结果</div>';
             return;
         }
+        var isNetEase = typeof App !== 'undefined' && App.sourceMode === 'netease';
+        var folderName = els.folderName ? els.folderName.textContent : '';
+        var isDaily = folderName.indexOf('每日推荐') >= 0;
+
+        // Get liked songs for daily recommend
+        var likedSet = new Set();
+        if (isNetEase && isDaily && typeof NetEaseUI !== 'undefined') {
+            likedSet = NetEaseUI.getLikedSongs();
+        }
+
         for (var i = 0; i < playlistTracks.length; i++) {
             var track = playlistTracks[i];
             var item = document.createElement('div');
             item.className = 'playlist-item' + (i === playlistCurrentIndex ? ' active' : '');
+
+            var actionBtn = '';
+            if (!isNetEase) {
+                // Non-NetEase: show download button
+                actionBtn = '<button class="playlist-item-download" title="下载">' +
+                    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
+                    '</button>';
+            }
+
             item.innerHTML =
                 '<span class="playlist-item-number">' + (i === playlistCurrentIndex ? '\u25B6' : (i + 1)) + '</span>' +
                 '<div class="playlist-item-info">' +
                     '<div class="playlist-item-title">' + escapeHtml(track.title || '未知曲目') + '</div>' +
                     '<div class="playlist-item-artist">' + escapeHtml(track.artist || '未知艺术家') + '</div>' +
-                '</div>';
+                '</div>' +
+                actionBtn;
             (function(trackObj, displayIdx) {
-                item.addEventListener('click', function() {
+                item.addEventListener('click', function(e) {
+                    if (e.target.closest('.playlist-item-download') || e.target.closest('.playlist-item-like')) return;
                     var origIdx = playlistOrigTracks.indexOf(trackObj);
-                    var dEl5 = document.getElementById('debug-log');
-                    if (dEl5 && dEl5.style.display !== 'none') {
-                        dEl5.textContent += '[click] display=' + displayIdx + ' orig=' + origIdx + ' title=' + (trackObj.title || '?').substring(0,20) + '\n';
-                    }
                     if (origIdx >= 0 && typeof App !== 'undefined') App.playTrack(origIdx);
                 });
+                var dlBtn = item.querySelector('.playlist-item-download');
+                if (dlBtn) {
+                    dlBtn.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        downloadTrack(trackObj);
+                    });
+                }
             })(track, i);
             els.playlistList.appendChild(item);
         }
@@ -442,6 +501,7 @@ const UI = (() => {
 
     function togglePlaylistPanel() {
         var isOpen = !els.playlistPanel.classList.contains('hidden') && !els.playlistPanel.classList.contains('closing');
+        var isMobile = window.innerWidth <= 768;
         if (isOpen) {
             // Close with animation
             els.playlistPanel.classList.add('closing');
@@ -452,11 +512,14 @@ const UI = (() => {
                 els.playlistPanel.classList.remove('closing');
             }, 250);
         } else {
+            // Close other panels
+            els.settingsPanel.classList.add('hidden');
+            var sourcePanel = document.getElementById('source-panel');
+            if (sourcePanel) sourcePanel.classList.add('hidden');
             // Open
             els.playlistPanel.classList.remove('hidden', 'closing');
             els.btnTogglePlaylist.classList.add('active');
-            els.btnToggleSettings.style.visibility = 'hidden';
-            if (els.settingsPanel) els.settingsPanel.classList.add('hidden');
+            if (!isMobile) els.btnToggleSettings.style.visibility = 'hidden';
         }
     }
 
@@ -492,6 +555,8 @@ const UI = (() => {
     function initSourceEvents() {
         els.btnSource.addEventListener('click', () => toggleSourcePanel());
         els.sourceOverlay.addEventListener('click', () => toggleSourcePanel(false));
+        var sourceCloseBtn = document.getElementById('source-close-btn');
+        if (sourceCloseBtn) sourceCloseBtn.addEventListener('click', () => toggleSourcePanel(false));
 
         els.sourceTabs.querySelectorAll('.source-tab').forEach(tab => {
             tab.addEventListener('click', () => {
@@ -530,6 +595,13 @@ const UI = (() => {
         var isOpen = !els.sourcePanel.classList.contains('hidden');
         var open = typeof force === 'boolean' ? force : !isOpen;
         if (open) {
+            // Close other panels
+            els.settingsPanel.classList.add('hidden');
+            els.playlistPanel.classList.add('hidden');
+            els.playlistPanel.classList.remove('closing');
+            els.btnTogglePlaylist.classList.remove('active');
+            els.btnToggleSettings.style.visibility = '';
+            // Open
             els.sourcePanel.classList.remove('hidden');
             els.btnSource.classList.add('open');
             renderDefaultFolders();
@@ -544,6 +616,11 @@ const UI = (() => {
     }
 
     function updateFolderName(text) {
+        // Extract folder name from path
+        if (text && text.indexOf('/') !== -1) {
+            var parts = text.split('/').filter(Boolean);
+            text = parts[parts.length - 1] || '全部歌曲';
+        }
         els.folderName.textContent = text || '';
     }
 
@@ -664,6 +741,13 @@ const UI = (() => {
 
     // ==================== Context Menu ====================
     function initContextMenu() {
+        // Block default context menu everywhere except context-menu itself
+        document.addEventListener('contextmenu', (e) => {
+            if (!e.target.closest('.context-menu')) {
+                e.preventDefault();
+            }
+        });
+
         // Close on click outside
         document.addEventListener('click', () => els.contextMenu.classList.add('hidden'));
         els.contextMenu.addEventListener('click', (e) => e.stopPropagation());
@@ -676,6 +760,7 @@ const UI = (() => {
             els.contextMenu.innerHTML = `
                 <div class="context-menu-item" data-action="copy-cover">复制封面地址</div>
                 <div class="context-menu-item" data-action="open-cover">在浏览器中打开</div>
+                <div class="context-menu-item" data-action="download-cover">下载封面</div>
             `;
             els.contextMenu.style.left = `${e.clientX}px`;
             els.contextMenu.style.top = `${e.clientY}px`;
@@ -687,6 +772,18 @@ const UI = (() => {
                         navigator.clipboard.writeText(src).catch(() => {});
                     } else if (item.dataset.action === 'open-cover') {
                         window.open(src, '_blank');
+                    } else if (item.dataset.action === 'download-cover') {
+                        var t = typeof PlaylistManager !== 'undefined' ? PlaylistManager.getCurrentTrack() : null;
+                        var coverName = 'cover.jpg';
+                        var downloadSrc = src;
+                        if (t) {
+                            var artist = t.artist || '';
+                            var title = t.title || '';
+                            coverName = artist ? artist + ' - ' + title + '.jpg' : title + '.jpg';
+                            // Use high quality cover if available
+                            if (t.hqCoverUrl) downloadSrc = t.hqCoverUrl;
+                        }
+                        downloadFile(downloadSrc, coverName);
                     }
                     els.contextMenu.classList.add('hidden');
                 };
@@ -703,26 +800,265 @@ const UI = (() => {
             const translation = line.querySelector('.lyric-translation')?.textContent || '';
             const fullText = translation ? `${original}\n${translation}` : original;
 
-            els.contextMenu.innerHTML = `<div class="context-menu-item" data-action="copy-lyric">复制歌词</div>`;
+            els.contextMenu.innerHTML = `
+                <div class="context-menu-item" data-action="copy-lyric">复制当前歌词</div>
+                <div class="context-menu-item" data-action="copy-all-lyrics">复制全部歌词</div>
+                <div class="context-menu-item" data-action="download-lyrics">下载歌词(txt)</div>
+                <div class="context-menu-item" data-action="download-lyrics-lrc">下载歌词(lrc)</div>
+            `;
             els.contextMenu.style.left = `${e.clientX}px`;
             els.contextMenu.style.top = `${e.clientY}px`;
             els.contextMenu.classList.remove('hidden');
 
-            els.contextMenu.querySelector('.context-menu-item').onclick = () => {
-                navigator.clipboard.writeText(fullText).catch(() => {});
-                els.contextMenu.classList.add('hidden');
-            };
+            els.contextMenu.querySelectorAll('.context-menu-item').forEach(item => {
+                item.onclick = () => {
+                    if (item.dataset.action === 'copy-lyric') {
+                        navigator.clipboard.writeText(fullText).catch(() => {});
+                    } else if (item.dataset.action === 'copy-all-lyrics') {
+                        copyAllLyrics();
+                    } else if (item.dataset.action === 'download-lyrics') {
+                        downloadLyrics();
+                    } else if (item.dataset.action === 'download-lyrics-lrc') {
+                        downloadLyricsWithTimestamp();
+                    }
+                    els.contextMenu.classList.add('hidden');
+                };
+            });
         });
+
+        // Mobile lyrics context menu
+        var mobileLyrics = document.getElementById('mobile-lyrics');
+        if (mobileLyrics) {
+            mobileLyrics.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                els.contextMenu.innerHTML = `
+                    <div class="context-menu-item" data-action="copy-all-lyrics">复制全部歌词</div>
+                    <div class="context-menu-item" data-action="download-lyrics">下载歌词(txt)</div>
+                    <div class="context-menu-item" data-action="download-lyrics-lrc">下载歌词(lrc)</div>
+                `;
+                els.contextMenu.style.left = `${e.clientX}px`;
+                els.contextMenu.style.top = `${e.clientY}px`;
+                els.contextMenu.classList.remove('hidden');
+
+                els.contextMenu.querySelectorAll('.context-menu-item').forEach(item => {
+                    item.onclick = () => {
+                        if (item.dataset.action === 'copy-all-lyrics') {
+                            copyAllLyrics();
+                        } else if (item.dataset.action === 'download-lyrics') {
+                            downloadLyrics();
+                        } else if (item.dataset.action === 'download-lyrics-lrc') {
+                            downloadLyricsWithTimestamp();
+                        }
+                        els.contextMenu.classList.add('hidden');
+                    };
+                });
+            });
+        }
+    }
+
+    function downloadFile(url, filename) {
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+
+    function copyAllLyrics() {
+        var lines = els.lyricsContent.querySelectorAll('.lyrics-line');
+        var text = '';
+        lines.forEach(function(line) {
+            var original = line.querySelector('.lyric-original');
+            var translation = line.querySelector('.lyric-translation');
+            if (original && original.textContent.trim()) {
+                text += original.textContent.trim();
+                if (translation && translation.textContent.trim()) {
+                    text += '\n' + translation.textContent.trim();
+                }
+                text += '\n';
+            }
+        });
+        navigator.clipboard.writeText(text.trim()).catch(function() {});
+    }
+
+    function downloadTrack(track) {
+        var sourceMode = typeof App !== 'undefined' ? App.sourceMode : 'default';
+        if (sourceMode === 'local') {
+            showToast('你der啊！本地文件你下什么');
+            return;
+        }
+        if (sourceMode === 'netease') {
+            downloadNeteaseTrack(track);
+        } else {
+            downloadDefaultTrack(track);
+        }
+    }
+
+    async function downloadNeteaseTrack(track) {
+        var id = track.neteaseId || track.id;
+        if (!id) { showToast('无法获取歌曲ID'); return; }
+        showToast('获取下载链接...');
+        var quality = typeof Settings !== 'undefined' ? Settings.get('neteaseQuality') || '320000' : '320000';
+        if (quality === 'flac') quality = '350000';
+        var urlData = await NetEaseAPI.getSongUrl(id, quality);
+        if (urlData && urlData.data && urlData.data[0] && urlData.data[0].url) {
+            var url = urlData.data[0].url;
+            var ext = urlData.data[0].type || 'mp3';
+            var filename = (track.artist || '') + ' - ' + (track.title || 'track') + '.' + ext;
+            var proxyUrl = '/api/netease/download?url=' + encodeURIComponent(url) + '&filename=' + encodeURIComponent(filename);
+            // Use fetch to get blob then trigger download
+            try {
+                showToast('下载中...');
+                var resp = await fetch(proxyUrl);
+                var blob = await resp.blob();
+                var blobUrl = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(function() { URL.revokeObjectURL(blobUrl); }, 10000);
+                showToast('下载完成');
+            } catch(e) {
+                console.error('Download error:', e);
+                showToast('下载失败');
+            }
+        } else {
+            showToast('无法获取下载链接');
+        }
+    }
+
+    function downloadDefaultTrack(track) {
+        if (!track.url) { showToast('无下载地址'); return; }
+        var filename = (track.artist || '') + ' - ' + (track.title || 'track');
+        var ext = track.url.split('.').pop().split('?')[0] || 'mp3';
+        downloadFile(track.url, filename + '.' + ext);
+        showToast('开始下载');
+    }
+
+    function downloadLyrics() {
+        var t = typeof PlaylistManager !== 'undefined' ? PlaylistManager.getCurrentTrack() : null;
+        var title = t ? (t.title || 'lyrics') : 'lyrics';
+        var artist = t ? (t.artist || '') : '';
+        var filename = artist ? artist + ' - ' + title + '.txt' : title + '.txt';
+
+        var lines = els.lyricsContent.querySelectorAll('.lyrics-line');
+        var text = '';
+        lines.forEach(function(line) {
+            var original = line.querySelector('.lyric-original');
+            var translation = line.querySelector('.lyric-translation');
+            if (original && original.textContent.trim()) {
+                text += original.textContent.trim();
+                if (translation && translation.textContent.trim()) {
+                    text += '\n' + translation.textContent.trim();
+                }
+                text += '\n';
+            }
+        });
+
+        var blob = new Blob([text.trim()], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        downloadFile(url, filename);
+        URL.revokeObjectURL(url);
+    }
+
+    function downloadLyricsWithTimestamp() {
+        var t = typeof PlaylistManager !== 'undefined' ? PlaylistManager.getCurrentTrack() : null;
+        var title = t ? (t.title || 'lyrics') : 'lyrics';
+        var artist = t ? (t.artist || '') : '';
+        var filename = artist ? artist + ' - ' + title + '.lrc' : title + '.lrc';
+
+        // Get lyrics from LyricsEngine
+        var lyrics = typeof LyricsEngine !== 'undefined' ? LyricsEngine.lyrics : [];
+        if (!lyrics.length) return;
+
+        var text = '';
+        lyrics.forEach(function(line) {
+            var time = line.time || 0;
+            var min = Math.floor(time / 60000);
+            var sec = Math.floor((time % 60000) / 1000);
+            var ms = Math.floor((time % 1000) / 10);
+            var timeStr = '[' + String(min).padStart(2, '0') + ':' + String(sec).padStart(2, '0') + '.' + String(ms).padStart(2, '0') + ']';
+            text += timeStr + (line.original || '') + '\n';
+            if (line.translation) {
+                text += timeStr + line.translation + '\n';
+            }
+        });
+
+        var blob = new Blob([text.trim()], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+        downloadFile(url, filename);
+        URL.revokeObjectURL(url);
+    }
+
+    function exportSettings() {
+        var data = {};
+        try { data = JSON.parse(localStorage.getItem('rnp-settings') || '{}'); } catch(e) {}
+        // Add NetEase cookie
+        var neCookie = localStorage.getItem('netease-cookie');
+        if (neCookie) data._neteaseCookie = neCookie;
+        var json = JSON.stringify(data, null, 2);
+        var blob = new Blob([json], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'saltmusic-config.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('配置已导出');
+    }
+
+    function importSettings() {
+        var input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = function(e) {
+            var file = e.target.files[0];
+            if (!file) return;
+            var reader = new FileReader();
+            reader.onload = function(ev) {
+                try {
+                    var data = JSON.parse(ev.target.result);
+                    // Restore NetEase cookie
+                    if (data._neteaseCookie) {
+                        localStorage.setItem('netease-cookie', data._neteaseCookie);
+                        delete data._neteaseCookie;
+                    }
+                    // Restore settings
+                    localStorage.setItem('rnp-settings', JSON.stringify(data));
+                    showToast('配置已导入，刷新页面生效');
+                } catch(e) {
+                    showToast('导入失败：文件格式错误');
+                }
+            };
+            reader.readAsText(file);
+        };
+        input.click();
     }
 
     // ==================== Settings Panel ====================
     function toggleSettingsPanel() {
+        var isOpen = !els.settingsPanel.classList.contains('hidden');
+        if (!isOpen) {
+            // Close other panels
+            els.sourcePanel.classList.add('hidden');
+            els.btnSource.classList.remove('open');
+            els.playlistPanel.classList.add('hidden');
+            els.playlistPanel.classList.remove('closing');
+            els.btnTogglePlaylist.classList.remove('active');
+        }
         els.settingsPanel.classList.toggle('hidden');
     }
 
     function initSettingsEvents() {
         els.btnToggleSettings.addEventListener('click', toggleSettingsPanel);
         els.settingsOverlay.addEventListener('click', toggleSettingsPanel);
+        var settingsCloseBtn = document.getElementById('settings-close-btn');
+        if (settingsCloseBtn) settingsCloseBtn.addEventListener('click', toggleSettingsPanel);
 
         // Tab switching
         els.settingsTabs.querySelectorAll('.settings-tab').forEach(tab => {
@@ -732,10 +1068,24 @@ const UI = (() => {
         });
 
         // React to settings changes
-        Settings.onChange(null, () => {
+        Settings.onChange(null, (key) => {
             Settings.applyBodyClasses();
             Settings.applyCSSVariables();
             LyricsEngine.updateLayout();
+            // Re-apply accent color when immersive color changes
+            if (key === 'immersiveColor') {
+                var img = els.albumArt;
+                if (img && img.complete && img.naturalWidth > 0) {
+                    extractColorsAndUpdate(img);
+                }
+            }
+            // Re-apply dynamic gradient when filter setting changes
+            if (key === 'dynamicGradientFilterBright') {
+                var img = els.albumArt;
+                if (img && img.complete && img.naturalWidth > 0) {
+                    updateBackground(img.src);
+                }
+            }
         });
 
         // Handle debug switch via event delegation
@@ -794,6 +1144,8 @@ const UI = (() => {
                 customFontRow(s.get('customFontFamily')) +
                 '<div class="settings-sep"></div>' +
                 group('网易云') +
+                toggle('neteaseDefaultDaily', '每日推荐为默认页', s.get('neteaseDefaultDaily')) +
+                '<div class="settings-sep"></div>' +
                 selectGroup('neteaseQuality', [
                     { value: '128000', label: '128kbps' },
                     { value: '192000', label: '192kbps' },
@@ -810,6 +1162,9 @@ const UI = (() => {
                         { value: 'svip', label: 'SVIP' },
                     ], s.get('neteaseVipType'), 'VIP状态修正') : '') +
                 '<div class="settings-sep"></div>' +
+                group('配置') +
+                '<div class="settings-row" style="gap:8px"><button class="settings-btn" onclick="typeof UI!==\'undefined\'&&UI.exportSettings()">导出配置</button><button class="settings-btn" onclick="typeof UI!==\'undefined\'&&UI.importSettings()">导入配置</button></div>' +
+                '<div class="settings-sep"></div>' +
                 group('调试') +
                 '<div class="settings-row"><span class="settings-label">调试日志</span><input type="checkbox" class="settings-checkbox" id="debug-switch-settings"></div>';
         }
@@ -820,6 +1175,7 @@ const UI = (() => {
                     { value: 'center', label: '居中' },
                     { value: 'right', label: '靠右' },
             ], s.get('horizontalAlign'), '对齐方式') +
+                slider('coverSize', '封面大小', 120, 500, s.get('coverSize'), 'px') +
                 selectGroup('rectangleCover', [
                     { value: 'true', label: '矩形' },
                     { value: 'false', label: '圆形' },
@@ -834,11 +1190,19 @@ const UI = (() => {
         }
 
         if (tabName === 'background') {
-            html += group('背景类型') +
+            html += selectGroup('immersiveColor', [
+                    { value: 'off', label: '关' },
+                    { value: 'primary', label: '鲜艳' },
+                    { value: 'secondary', label: '柔和' },
+                    { value: 'tertiary', label: '偏色' },
+                ], s.get('immersiveColor'), '沉浸主题色') +
+                '<div class="settings-sep"></div>' +
+                group('背景类型') +
                 selectGroup('bgType', [
                     { value: 'blur', label: '模糊' },
                     { value: 'fluid', label: '动态' },
                     { value: 'gradient', label: '旋转' },
+                    { value: 'dynamic-gradient', label: '动态渐变' },
                     { value: 'solid', label: '纯色' },
                     { value: 'none', label: '无' },
                 ], s.get('bgType'));
@@ -860,7 +1224,16 @@ const UI = (() => {
                     slider('gradientOpacity', '不透明度', 0, 100, s.get('gradientOpacity'), '%') +
                     slider('rotateBgSpeed', '旋转速度', 1, 30, s.get('rotateBgSpeed'), 's') +
                     slider('rotateBgBlur', '旋转模糊', 0, 80, s.get('rotateBgBlur'), 'px') +
-                    slider('rotateBgZoom', '封面放大', 100, 400, s.get('rotateBgZoom'), '%');
+                    slider('rotateBgZoom', '封面放大', 100, 400, s.get('rotateBgZoom'), '%') +
+                    slider('gradientAccent', '强调色蒙版', 0, 80, s.get('gradientAccent'), '%');
+            }
+            if (s.get('bgType') === 'dynamic-gradient') {
+                html += '<div class="settings-sep"></div><div class="settings-group"><div class="settings-group-title">动态渐变设置</div>' +
+                    slider('dynamicGradientDarken', '压暗程度', 0, 80, s.get('dynamicGradientDarken'), '%') +
+                    slider('dynamicGradientOpacity', '不透明度', 0, 100, s.get('dynamicGradientOpacity'), '%') +
+                    slider('dynamicGradientSpeed', '动画速度', 5, 60, s.get('dynamicGradientSpeed'), 's') +
+                    slider('dynamicGradientDim', '强调色蒙版', 0, 100, s.get('dynamicGradientDim'), '%') +
+                    toggle('dynamicGradientFilterBright', '屏蔽高亮色', s.get('dynamicGradientFilterBright'));
             }
             if (s.get('bgType') === 'solid') {
                 html += '<div class="settings-sep"></div><div class="settings-group"><div class="settings-group-title">纯色设置</div>' +
@@ -883,6 +1256,14 @@ const UI = (() => {
                 slider('lyricAlignment', '歌词位置', 10, 90, s.get('lyricAlignment'), '%') +
                 slider('lyricLineSpacing', '行距', 2, 40, s.get('lyricLineSpacing'), 'px') +
                 '<div class="settings-sep"></div>' +
+                '<div class="mobile-lyric-group">' + group('文字效果设置') + '</div>' +
+                '<div class="mobile-lyric-settings">' +
+                slider('mobileLyricSize', '歌词字号', 10, 20, s.get('mobileLyricSize'), 'px') +
+                slider('mobileLyricWeight', '歌词粗细', 300, 700, s.get('mobileLyricWeight'), '') +
+                slider('mobileTransSize', '翻译字号', 8, 16, s.get('mobileTransSize'), 'px') +
+                slider('mobileTransWeight', '翻译粗细', 300, 500, s.get('mobileTransWeight'), '') +
+                slider('mobileLineSpacing', '歌词行距', 0, 12, s.get('mobileLineSpacing'), 'px') +
+                '</div>' +
                 // Parent collapsible: 文字效果
                 '<div class="elem-group"><div class="elem-group-header"><span>文字效果</span><svg class="elem-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="elem-group-body hidden">' +
                 elemSection('歌词原文', 'lyricOrig', s, 'lyricFontFamily', 'lyricFontSize', 'lyricFontWeight') +
@@ -1252,6 +1633,8 @@ const UI = (() => {
         updateSourceTab,
         renderSourceFolders,
         updateTitleSize,
+        exportSettings,
+        importSettings,
         get els() { return els; }
     };
 })();

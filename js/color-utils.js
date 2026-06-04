@@ -154,33 +154,58 @@ const ColorUtils = (() => {
     // Apply accent color to CSS variables
     function applyAccentColor(r, g, b) {
         const root = document.documentElement;
+        const variant = (typeof Settings !== 'undefined') ? Settings.get('immersiveColor') : 'off';
+
+        if (variant === 'off') {
+            // Reset to default white
+            root.style.setProperty('--rnp-accent-color-shade-2', 'rgb(255, 255, 255)');
+            root.style.setProperty('--rnp-accent-color-shade-2-rgb', '255, 255, 255');
+            root.style.setProperty('--rnp-accent-color', `rgb(${r}, ${g}, ${b})`);
+            root.style.setProperty('--rnp-accent-color-rgb', `${r}, ${g}, ${b}`);
+            document.body.classList.remove('immersive-color');
+            return;
+        }
+
+        document.body.classList.add('immersive-color');
         root.style.setProperty('--rnp-accent-color', `rgb(${r}, ${g}, ${b})`);
         root.style.setProperty('--rnp-accent-color-rgb', `${r}, ${g}, ${b}`);
 
-        // Shade 1: lighter
         const [h, s, l] = rgb2Hsl([r, g, b]);
-        const shade1 = hsl2Rgb([h, Math.min(s + 0.1, 1), Math.min(l + 0.25, 0.9)]);
-        root.style.setProperty('--rnp-accent-color-shade-1', 
-            `rgb(${Math.round(shade1[0])}, ${Math.round(shade1[1])}, ${Math.round(shade1[2])})`);
-        root.style.setProperty('--rnp-accent-color-shade-1-rgb', 
-            `${Math.round(shade1[0])}, ${Math.round(shade1[1])}, ${Math.round(shade1[2])}`);
 
-        // Shade 2: lightest / text color
-        const shade2 = hsl2Rgb([h, Math.min(s * 0.5, 0.5), Math.min(l + 0.35, 0.95)]);
-        root.style.setProperty('--rnp-accent-color-shade-2', 
+        // Shade 1: lighter
+        const shade1 = hsl2Rgb([h, Math.min(s + 0.1, 1), Math.min(l + 0.25, 0.9)]);
+        root.style.setProperty('--rnp-accent-color-shade-1',
+            `rgb(${Math.round(shade1[0])}, ${Math.round(shade1[1])}, ${Math.round(shade1[2])})`);
+
+        // Generate shade 2 based on variant
+        let shade2;
+        if (variant === 'primary') {
+            // Vibrant: saturated, bright
+            shade2 = hsl2Rgb([h, Math.min(s + 0.15, 1), Math.min(l + 0.3, 0.92)]);
+        } else if (variant === 'secondary') {
+            // Soft: desaturated, warmer tone
+            shade2 = hsl2Rgb([h, Math.max(s * 0.4, 0.15), Math.min(l + 0.4, 0.95)]);
+        } else if (variant === 'tertiary') {
+            // Tinted: shift hue significantly
+            shade2 = hsl2Rgb([(h + 0.15) % 1, Math.min(s * 0.9, 0.8), Math.min(l + 0.25, 0.9)]);
+        } else {
+            shade2 = hsl2Rgb([h, Math.min(s * 0.5, 0.5), Math.min(l + 0.35, 0.95)]);
+        }
+
+        root.style.setProperty('--rnp-accent-color-shade-2',
             `rgb(${Math.round(shade2[0])}, ${Math.round(shade2[1])}, ${Math.round(shade2[2])})`);
-        root.style.setProperty('--rnp-accent-color-shade-2-rgb', 
+        root.style.setProperty('--rnp-accent-color-shade-2-rgb',
             `${Math.round(shade2[0])}, ${Math.round(shade2[1])}, ${Math.round(shade2[2])}`);
 
         // On-primary (dark text for buttons)
         const lum = calcLuminance([r, g, b]);
         const onPrimary = lum > 128 ? [10, 10, 10] : [250, 250, 250];
-        root.style.setProperty('--rnp-accent-color-on-primary', 
+        root.style.setProperty('--rnp-accent-color-on-primary',
             `rgb(${onPrimary[0]}, ${onPrimary[1]}, ${onPrimary[2]})`);
 
-        // Glow color (saturated version)
+        // Glow color
         const glow = hsl2Rgb([h, Math.min(s + 0.2, 1), Math.min(l + 0.1, 0.7)]);
-        root.style.setProperty('--rnp-accent-color-bg', 
+        root.style.setProperty('--rnp-accent-color-bg',
             `rgb(${Math.round(glow[0])}, ${Math.round(glow[1])}, ${Math.round(glow[2])})`);
     }
 

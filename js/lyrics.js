@@ -19,10 +19,13 @@ const LyricsEngine = (() => {
     };
 
     function parseLRC(text) {
-        if (!text) return [];
+        if (!text) return { lyrics: [] };
         const lines = text.split('\n');
         const result = [];
         let offset = 0;
+
+        const extractLrcRegex = /^(?:\[([^\]]+)\])+(?!\[)(.+)$/gm;
+        const extractTimestampRegex = /\[(\d+):(\d+)(?:\.|:)*(\d+)*\]/g;
 
         for (const line of lines) {
             const trimmed = line.trim();
@@ -32,29 +35,46 @@ const LyricsEngine = (() => {
                 if (metaMatch[1].toLowerCase() === 'offset') offset = parseInt(metaMatch[2].trim()) || 0;
                 continue;
             }
-            const timeRegex = /\[(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?\]/g;
-            const timestamps = [];
-            let match, lastIndex = 0;
-            while ((match = timeRegex.exec(trimmed)) !== null) {
-                const min = parseInt(match[1]), sec = parseInt(match[2]);
-                const ms = match[3] ? parseInt(match[3].padEnd(3, '0')) : 0;
-                timestamps.push(min * 60000 + sec * 1000 + ms);
-                lastIndex = timeRegex.lastIndex;
-            }
-            if (timestamps.length > 0) {
-                const text = trimmed.substring(lastIndex).trim();
-                const isInterlude = !text || /^[.…・]+$/.test(text);
-                for (const time of timestamps) result.push({ time: time + offset, original: text, translation: '', isInterlude });
+
+            // Extract timestamps and content
+            const lrcMatch = trimmed.match(/^(?<timestamps>(?:\[.+?\])+)(?!\[)(?<content>.+)$/);
+            if (!lrcMatch) continue;
+
+            const timestampsStr = lrcMatch.groups.timestamps;
+            const content = lrcMatch.groups.content.trim();
+            const isInterlude = !content || /^[.…・]+$/.test(content);
+
+            // Parse all timestamps
+            let timestampMatch;
+            const timestampRegex = /\[(\d+):(\d+)(?:\.|:)*(\d+)*\]/g;
+            while ((timestampMatch = timestampRegex.exec(timestampsStr)) !== null) {
+                const min = parseInt(timestampMatch[1]);
+                const sec = parseInt(timestampMatch[2]);
+                const ms = timestampMatch[3] ? parseInt(timestampMatch[3].slice(0, 2).padEnd(2, '0')) * 10 : 0;
+                const time = min * 60000 + sec * 1000 + ms + offset;
+                result.push({ time, original: content, translation: '', isInterlude });
             }
         }
+
         result.sort((a, b) => a.time - b.time);
+
+        // Merge duplicate timestamps
         const merged = [];
         for (let i = 0; i < result.length; i++) {
             if (i > 0 && Math.abs(result[i].time - result[i - 1].time) < 50) {
-                if (merged.length > 0 && !merged[merged.length - 1].translation && result[i].original)
-                    merged[merged.length - 1].translation = result[i].original;
-            } else merged.push({ ...result[i] });
+                var prev = merged.length > 0 ? merged[merged.length - 1] : null;
+                if (prev && !prev.translation && result[i].original) {
+                    prev.translation = result[i].original;
+                } else if (prev && prev.original && !result[i].original) {
+                    // Skip empty duplicate
+                } else {
+                    merged.push({ ...result[i] });
+                }
+            } else {
+                merged.push({ ...result[i] });
+            }
         }
+
         return { lyrics: merged };
     }
 
@@ -80,24 +100,20 @@ const LyricsEngine = (() => {
         if (!lyrics.length) {
             var ph = document.createElement('div');
             ph.className = 'lyrics-placeholder';
-            ph.textContent = '暂无歌词';
+            ph.textContent = '';
             ph.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:20px;color:rgba(255,255,255,0.3);';
             contentEl.appendChild(ph);
             return;
         }
         lyrics.forEach((line, index) => {
+            if (line.isInterlude) return; // Skip interlude lines
             var el = document.createElement('div');
             el.className = 'lyrics-line';
             el.dataset.index = index;
             el.setAttribute('offset', '1');
-            if (line.isInterlude) {
-                el.classList.add('interlude');
-                el.innerHTML = '<div class="interlude-dots"><span class="interlude-dot"></span><span class="interlude-dot"></span><span class="interlude-dot"></span></div>';
-            } else {
-                var html = '<div class="lyric-original">' + esc(line.original) + '</div>';
-                if (line.translation) html += '<div class="lyric-translation">' + esc(line.translation) + '</div>';
-                el.innerHTML = html;
-            }
+            var html = '<div class="lyric-original">' + esc(line.original) + '</div>';
+            if (line.translation) html += '<div class="lyric-translation">' + esc(line.translation) + '</div>';
+            el.innerHTML = html;
             el.addEventListener('click', () => {
                 if (!line.isInterlude && typeof AudioEngine !== 'undefined') AudioEngine.seek(line.time / 1000);
             });
@@ -114,7 +130,81 @@ const LyricsEngine = (() => {
         for (var i = 0; i < lyrics.length; i++) {
             if (lyrics[i].time <= timeMs) found = i; else break;
         }
-        if (found !== currentLine) { currentLine = found; updateLayout(false); }
+        if (found !== currentLine) {
+            currentLine = found;
+            if (!userScrolling) updateLayout(false);
+        }
+        updateMobileLyrics(found);
+    }
+
+    function escapeHtml(text) {
+        var d = document.createElement('div');
+        d.textContent = text;
+        return d.innerHTML;
+    }
+
+    function updateMobileLyrics(idx) {
+        var prev2El = document.getElementById('mobile-lyric-prev2');
+        var prevEl = document.getElementById('mobile-lyric-prev');
+        var currEl = document.getElementById('mobile-lyric-current');
+        var nextEl = document.getElementById('mobile-lyric-next');
+        var next2El = document.getElementById('mobile-lyric-next2');
+        if (!currEl) return;
+
+        if (!lyrics.length) {
+            if (prev2El) prev2El.textContent = '';
+            if (prevEl) prevEl.textContent = '';
+            currEl.textContent = '. . .';
+            if (nextEl) nextEl.textContent = '';
+            if (next2El) next2El.textContent = '';
+            return;
+        }
+
+        var curr = lyrics[idx];
+        var hasTranslation = curr && curr.translation;
+
+        if (hasTranslation) {
+            if (prev2El) prev2El.style.display = 'none';
+            if (next2El) next2El.style.display = 'none';
+        } else {
+            if (prev2El) prev2El.style.display = '';
+            if (next2El) next2El.style.display = '';
+        }
+
+        var prev2 = idx > 1 ? lyrics[idx - 2] : null;
+        var prev = idx > 0 ? lyrics[idx - 1] : null;
+        var next = idx < lyrics.length - 1 ? lyrics[idx + 1] : null;
+        var next2 = idx < lyrics.length - 2 ? lyrics[idx + 2] : null;
+
+        if (prev2El) prev2El.textContent = (prev2 && prev2.original && !prev2.isInterlude) ? prev2.original : '';
+        if (prevEl) {
+            if (hasTranslation && prev && prev.original && !prev.isInterlude) {
+                prevEl.innerHTML = escapeHtml(prev.original) + (prev.translation ? '<div class="mobile-lyric-trans">' + escapeHtml(prev.translation) + '</div>' : '');
+            } else {
+                prevEl.textContent = (prev && prev.original && !prev.isInterlude) ? prev.original : '';
+            }
+        }
+        if (curr) {
+            if (curr.isInterlude || !curr.original) {
+                currEl.textContent = '';
+            } else {
+                var html = escapeHtml(curr.original);
+                if (curr.translation) {
+                    html += '<div class="mobile-lyric-trans">' + escapeHtml(curr.translation) + '</div>';
+                }
+                currEl.innerHTML = html;
+            }
+        } else {
+            currEl.textContent = '';
+        }
+        if (nextEl) {
+            if (hasTranslation && next && next.original && !next.isInterlude) {
+                nextEl.innerHTML = escapeHtml(next.original) + (next.translation ? '<div class="mobile-lyric-trans">' + escapeHtml(next.translation) + '</div>' : '');
+            } else {
+                nextEl.textContent = (next && next.original && !next.isInterlude) ? next.original : '';
+            }
+        }
+        if (next2El) next2El.textContent = (next2 && next2.original && !next2.isInterlude) ? next2.original : '';
     }
 
     function getLineSpacing() { return typeof Settings !== 'undefined' ? Settings.get('lyricLineSpacing') : 8; }
@@ -159,7 +249,7 @@ const LyricsEngine = (() => {
         }
     }
 
-    var wheelTimer = null, visualLine = -1;
+    var wheelTimer = null, visualLine = -1, userScrolling = false;
 
     function highlightVisual(lineIdx, slow) {
         if (!contentEl || !containerEl) return;
@@ -193,6 +283,7 @@ const LyricsEngine = (() => {
         ro.observe(containerEl);
         containerEl.addEventListener('wheel', function(e) {
             e.preventDefault();
+            userScrolling = true;
             if (!lyrics.length) return;
             var ni = [];
             for (var i = 0; i < lyrics.length; i++) if (!lyrics[i].isInterlude) ni.push(i);
@@ -204,12 +295,19 @@ const LyricsEngine = (() => {
             visualLine = ni[next];
             highlightVisual(visualLine);
             clearTimeout(wheelTimer);
-            wheelTimer = setTimeout(function() { visualLine = -1; highlightVisual(currentLine, true); }, 3000);
+            wheelTimer = setTimeout(function() { visualLine = -1; userScrolling = false; highlightVisual(currentLine, true); }, 3000);
         }, { passive: false });
         containerEl.addEventListener('mouseleave', function() { clearTimeout(wheelTimer); if (visualLine >= 0) { visualLine = -1; highlightVisual(currentLine, true); } });
     }
 
-    function reset() { lyrics = []; currentLine = 0; visualLine = -1; if (contentEl) contentEl.innerHTML = ''; }
+    function reset() {
+        lyrics = [];
+        currentLine = 0;
+        visualLine = -1;
+        userScrolling = false;
+        clearTimeout(wheelTimer);
+        if (contentEl) contentEl.innerHTML = '';
+    }
     function getLyricAtTime(timeMs) { for (var i = lyrics.length - 1; i >= 0; i--) if (lyrics[i].time <= timeMs) return i; return 0; }
 
     return { init, parseLRC, setLyrics, update, reset, getLyricAtTime, updateLayout, get currentLine() { return currentLine; }, get lyrics() { return lyrics; }, get isUnsynced() { return isUnsynced; }, overrides };
