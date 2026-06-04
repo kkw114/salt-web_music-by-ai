@@ -315,13 +315,22 @@ const App = (() => {
         AudioEngine.on('play', function() {
             UI.updatePlayButton(true);
             var t = PlaylistManager.getCurrentTrack();
-            if (t) { UI.updateTrackInfo(t); UI.updateAlbumArt(t.coverUrl); }
+            if (t) {
+                UI.updateTrackInfo(t);
+                UI.updateAlbumArt(t.coverUrl);
+                // Update page title
+                document.title = t.title + ' - ' + t.artist;
+                // Update favicon to album cover
+                updateFavicon(t.coverUrl);
+                // Update Windows media controls
+                updateMediaSession(t);
+            }
             // Update NetEase quality display
             if (sourceMode === 'netease' && typeof NetEaseUI !== 'undefined') {
                 NetEaseUI.updateQualityDisplay(t);
             }
         });
-        AudioEngine.on('pause', function() { UI.updatePlayButton(false); });
+        AudioEngine.on('pause', function() { UI.updatePlayButton(false); document.title = 'SaltPlayer'; });
         AudioEngine.on('timeupdate', function(d) { UI.updateProgress(d.current, d.duration); LyricsEngine.update(d.current * 1000); });
         AudioEngine.on('end', function() {
             if (PlaylistManager.next(false) === -1) UI.updatePlayButton(false);
@@ -1486,6 +1495,70 @@ const App = (() => {
             toast.classList.remove('show');
             setTimeout(function() { toast.remove(); }, 300);
         }, 2000);
+    }
+
+    function updateFavicon(coverUrl) {
+        var link = document.querySelector("link[rel~='icon']");
+        if (!link) {
+            link = document.createElement('link');
+            link.rel = 'icon';
+            document.head.appendChild(link);
+        }
+        if (coverUrl) {
+            var img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = function() {
+                var canvas = document.createElement('canvas');
+                canvas.width = 32;
+                canvas.height = 32;
+                var ctx = canvas.getContext('2d');
+                // Draw rounded rectangle
+                var r = 6;
+                ctx.beginPath();
+                ctx.moveTo(r, 0);
+                ctx.lineTo(32 - r, 0);
+                ctx.quadraticCurveTo(32, 0, 32, r);
+                ctx.lineTo(32, 32 - r);
+                ctx.quadraticCurveTo(32, 32, 32 - r, 32);
+                ctx.lineTo(r, 32);
+                ctx.quadraticCurveTo(0, 32, 0, 32 - r);
+                ctx.lineTo(0, r);
+                ctx.quadraticCurveTo(0, 0, r, 0);
+                ctx.closePath();
+                ctx.clip();
+                ctx.drawImage(img, 0, 0, 32, 32);
+                link.href = canvas.toDataURL('image/png');
+            };
+            img.onerror = function() {
+                link.href = '/favicon.ico';
+            };
+            img.src = coverUrl;
+        } else {
+            link.href = '/favicon.ico';
+        }
+    }
+
+    function updateMediaSession(track) {
+        if (!('mediaSession' in navigator)) return;
+        var metadata = {
+            title: track.title || '未知曲目',
+            artist: track.artist || '未知艺术家',
+            album: track.album || ''
+        };
+        if (track.coverUrl) {
+            metadata.artwork = [
+                { src: track.coverUrl, sizes: '300x300', type: 'image/jpeg' }
+            ];
+        }
+        navigator.mediaSession.metadata = new MediaMetadata(metadata);
+
+        // Action handlers
+        navigator.mediaSession.setActionHandler('play', function() { AudioEngine.resume(); });
+        navigator.mediaSession.setActionHandler('pause', function() { AudioEngine.pause(); });
+        navigator.mediaSession.setActionHandler('previoustrack', function() { playPrev(); });
+        navigator.mediaSession.setActionHandler('nexttrack', function() { playNext(); });
+        navigator.mediaSession.setActionHandler('seekbackward', function() { AudioEngine.seek(AudioEngine.getPosition() - 10); });
+        navigator.mediaSession.setActionHandler('seekforward', function() { AudioEngine.seek(AudioEngine.getPosition() + 10); });
     }
 
     return {
