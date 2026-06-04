@@ -119,7 +119,9 @@ SaltLink/
 
 ## 鸣谢
 Refined Now Playing：https://github.com/solstice23/refined-now-playing-netease
+
 YesPlayMusic：https://github.com/qier222/YesPlayMusic
+
 ## 许可证
 
 MIT License
