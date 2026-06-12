@@ -11,6 +11,18 @@ const NetEaseUI = (() => {
     let currentContextLabel = '网易云音乐'; // Current context label for source display
     let userIsVip = false; // Whether user is VIP
     let likedSongIds = new Set(); // Liked song IDs
+    let dailyTracksCache = null;
+
+    // User info cache
+    function getCachedUserInfo() {
+        try {
+            var data = JSON.parse(localStorage.getItem('netease-user-info') || 'null');
+            return data;
+        } catch(e) { return null; }
+    }
+    function setCachedUserInfo(data) {
+        try { localStorage.setItem('netease-user-info', JSON.stringify(data)); } catch(e) {}
+    }
 
     // Notify all UI components when like state changes
     function notifyLikeChanged(songId, isLiked) {
@@ -251,12 +263,25 @@ const NetEaseUI = (() => {
 
         container.innerHTML = '';
 
+        // Fetch daily recommend for cover
+        var dailyCoverHtml = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
+        try {
+            var dailyData = await NetEaseAPI.getDailyRecommend();
+            if (dailyData && dailyData.data && dailyData.data.dailySongs && dailyData.data.dailySongs.length > 0) {
+                dailyTracksCache = dailyData.data.dailySongs;
+                var firstTrack = dailyData.data.dailySongs[0];
+                if (firstTrack.al && firstTrack.al.picUrl) {
+                    dailyCoverHtml = '<img src="' + firstTrack.al.picUrl + '?param=100y100" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;" loading="lazy" />';
+                }
+            }
+        } catch(e) {}
+
         // Daily recommend button
         var dailyItem = document.createElement('div');
         dailyItem.className = 'netease-playlist-list-item netease-daily-item';
         dailyItem.innerHTML = '' +
             '<div class="netease-playlist-list-cover netease-daily-cover">' +
-                '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' +
+                dailyCoverHtml +
             '</div>' +
             '<div class="netease-playlist-list-info">' +
                 '<div class="netease-playlist-list-name">每日推荐</div>' +
@@ -334,8 +359,16 @@ const NetEaseUI = (() => {
         }
 
         var allTracks = data.data.dailySongs;
-        var today = new Date();
-        var dateStr = (today.getMonth() + 1) + '月' + today.getDate() + '日';
+        var now = new Date();
+        // Daily recommend changes at 6am: before 6am use yesterday's date
+        if (now.getHours() < 6) now.setDate(now.getDate() - 1);
+        var dateStr = (now.getMonth() + 1) + '月' + now.getDate() + '日';
+
+        // Get cover from first track
+        var dailyCoverHtml = '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
+        if (allTracks.length > 0 && allTracks[0].al && allTracks[0].al.picUrl) {
+            dailyCoverHtml = '<img src="' + allTracks[0].al.picUrl + '?param=300y300" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;" loading="lazy" />';
+        }
 
         headerEl.innerHTML = '' +
             '<button class="netease-back-btn" id="netease-back-btn">' +
@@ -344,7 +377,7 @@ const NetEaseUI = (() => {
             '</button>' +
             '<div class="netease-detail-info">' +
                 '<div class="netease-detail-cover netease-daily-cover-big">' +
-                    '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' +
+                    dailyCoverHtml +
                 '</div>' +
                 '<div class="netease-detail-meta">' +
                     '<div class="netease-detail-name">每日推荐 · ' + dateStr + '</div>' +
@@ -738,6 +771,7 @@ const NetEaseUI = (() => {
         // Set tracks and play
         if (typeof PlaylistManager !== 'undefined') {
             PlaylistManager.setTracks(playableTracks);
+            if (typeof App !== 'undefined') App.setPlaybackSource('netease');
             if (typeof UI !== 'undefined') {
                 UI.showPlayer();
                 // Update source label to username if logged in
@@ -751,7 +785,7 @@ const NetEaseUI = (() => {
                         userLabel = nameText.replace(/\s*(VIP|SVIP)\s*$/, '').trim();
                     }
                 }
-                UI.updateSourceLabel(userLabel);
+                UI.updateSourceLabel(userLabel, 'netease');
                 UI.updateFolderName(currentContextLabel);
                 UI.renderPlaylist(playableTracks, actualIndex, currentContextLabel);
                 // Update quality display
@@ -769,15 +803,17 @@ const NetEaseUI = (() => {
         if (track.bitrate) {
             var br = track.bitrate;
             if (br >= 999000) el.textContent = 'FLAC';
-            else if (br >= 350000) el.textContent = 'SQ';
-            else el.textContent = Math.round(br / 1000);
+            else if (br >= 350000) el.textContent = 'HQ';
+            else if (br >= 128000) el.textContent = 'LQ';
+            else el.textContent = 'LQ';
         } else {
             // Fallback to settings
-            var quality = '320';
+            var quality = 'HQ';
             if (typeof Settings !== 'undefined') {
                 var q = Settings.get('neteaseQuality') || '320000';
                 if (q === 'flac') quality = 'FLAC';
-                else quality = Math.round(parseInt(q) / 1000) + '';
+                else if (q === '320000') quality = 'HQ';
+                else quality = 'LQ';
             }
             el.textContent = quality;
         }
@@ -916,44 +952,74 @@ const NetEaseUI = (() => {
         if (isLoggedIn) {
             if (loginBtn) loginBtn.classList.add('hidden');
             if (userInfo) userInfo.classList.remove('hidden');
-            if (username) username.textContent = '已登录';
-            // Try to get user info
+
+            // Try to use cached user info first
+            var cached = getCachedUserInfo();
+            if (cached && cached.nickname) {
+                applyUserInfo(cached.nickname, cached.avatarUrl, cached.userId, cached.vipType);
+            } else {
+                if (username) username.textContent = '已登录';
+            }
+
+            // Always load playlists
+            loadUserPlaylists();
+
+            // Fetch fresh data from API in background
             NetEaseAPI.getUserAccount().then(function(data) {
                 if (data && data.profile) {
                     var nickname = data.profile.nickname || '';
-                    // Check VIP status: viptypeVersion exists = has VIP
-                    userIsVip = !!data.profile.viptypeVersion;
-                    var vipTypeSetting = typeof Settings !== 'undefined' ? Settings.get('neteaseVipType') : 'auto';
-                    var displayType = vipTypeSetting;
-                    if (displayType === 'auto') {
-                        // Auto-detect: default to VIP if has viptypeVersion
-                        displayType = userIsVip ? 'vip' : 'none';
-                    }
-                    if (username) {
-                        username.innerHTML = escapeHtml(nickname);
-                        if (displayType === 'svip') {
-                            username.innerHTML += ' <span class="netease-vip-badge svip">SVIP</span>';
-                        } else if (displayType === 'vip') {
-                            username.innerHTML += ' <span class="netease-vip-badge">VIP</span>';
-                        }
-                    }
-                    if (avatar) avatar.src = data.profile.avatarUrl ? data.profile.avatarUrl + '?param=50y50' : '';
-                    if (typeof UI !== 'undefined') {
-                        UI.updateSourceLabel(nickname);
-                    }
+                    var avatarUrl = data.profile.avatarUrl || '';
+                    var userId = data.profile.userId;
+                    var vipType = data.profile.viptypeVersion || 0;
+
+                    // Update cache
+                    setCachedUserInfo({
+                        nickname: nickname,
+                        avatarUrl: avatarUrl,
+                        userId: userId,
+                        vipType: vipType
+                    });
+
+                    // Apply user info
+                    applyUserInfo(nickname, avatarUrl, userId, vipType);
                 }
             });
-            // Load user playlists
-            loadUserPlaylists();
         } else {
             if (loginBtn) loginBtn.classList.remove('hidden');
             if (userInfo) userInfo.classList.add('hidden');
             var container = document.getElementById('netease-user-playlists');
             if (container) container.innerHTML = '<div class="netease-empty">请先登录</div>';
+            // Clear cache on logout
+            localStorage.removeItem('netease-user-info');
             // Reset source label
             if (typeof UI !== 'undefined') {
-                UI.updateSourceLabel('网易云音乐');
+                UI.updateSourceLabel('网易云音乐', 'netease');
             }
+        }
+    }
+
+    // Apply user info to UI elements
+    function applyUserInfo(nickname, avatarUrl, userId, vipType) {
+        var username = document.getElementById('netease-username');
+        var avatar = document.getElementById('netease-avatar');
+
+        userIsVip = !!vipType;
+        var vipTypeSetting = typeof Settings !== 'undefined' ? Settings.get('neteaseVipType') : 'auto';
+        var displayType = vipTypeSetting;
+        if (displayType === 'auto') {
+            displayType = userIsVip ? 'vip' : 'none';
+        }
+        if (username) {
+            username.innerHTML = escapeHtml(nickname);
+            if (displayType === 'svip') {
+                username.innerHTML += ' <span class="netease-vip-badge svip">SVIP</span>';
+            } else if (displayType === 'vip') {
+                username.innerHTML += ' <span class="netease-vip-badge">VIP</span>';
+            }
+        }
+        if (avatar) avatar.src = avatarUrl ? avatarUrl + '?param=50y50' : '';
+        if (typeof UI !== 'undefined') {
+            UI.updateSourceLabel(nickname, 'netease');
         }
     }
 

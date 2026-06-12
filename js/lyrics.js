@@ -15,7 +15,7 @@ const LyricsEngine = (() => {
     const overrides = {
         scale: (offset) => { offset = Math.abs(offset); if (offset === 0) return 1; return Math.max(1 - offset * 0.08, 0.7); },
         opacity: (offset) => { offset = Math.abs(offset); if (offset === 0) return 1; if (offset === 1) return 0.6; return Math.max(0.4 - (offset - 1) * 0.1, 0.15); },
-        blur: (offset) => { offset = Math.abs(offset); if (offset === 0) return 0; if (offset <= 1) return 0.5; return Math.min(0.5 + (offset - 1) * 0.8, 4); }
+        blur: (offset) => { offset = Math.abs(offset); if (offset === 0) return 0; if (offset <= 1) return 0.3; return Math.min(0.3 + (offset - 1) * 0.5, 3); }
     };
 
     function parseLRC(text) {
@@ -105,12 +105,15 @@ const LyricsEngine = (() => {
             contentEl.appendChild(ph);
             return;
         }
+        var lyricAlign = (typeof Settings !== 'undefined') ? (Settings.get('lyricAlign') || 'center') : 'center';
         lyrics.forEach((line, index) => {
-            if (line.isInterlude) return; // Skip interlude lines
+            if (line.isInterlude) return;
             var el = document.createElement('div');
             el.className = 'lyrics-line';
             el.dataset.index = index;
             el.setAttribute('offset', '1');
+            el.style.textAlign = lyricAlign;
+            el.style.transformOrigin = lyricAlign === 'left' ? 'left center' : lyricAlign === 'right' ? 'right center' : 'center center';
             var html = '<div class="lyric-original">' + esc(line.original) + '</div>';
             if (line.translation) html += '<div class="lyric-translation">' + esc(line.translation) + '</div>';
             el.innerHTML = html;
@@ -144,19 +147,23 @@ const LyricsEngine = (() => {
     }
 
     function updateMobileLyrics(idx) {
+        var prev3El = document.getElementById('mobile-lyric-prev3');
         var prev2El = document.getElementById('mobile-lyric-prev2');
         var prevEl = document.getElementById('mobile-lyric-prev');
         var currEl = document.getElementById('mobile-lyric-current');
         var nextEl = document.getElementById('mobile-lyric-next');
         var next2El = document.getElementById('mobile-lyric-next2');
+        var next3El = document.getElementById('mobile-lyric-next3');
         if (!currEl) return;
 
         if (!lyrics.length) {
+            if (prev3El) prev3El.textContent = '';
             if (prev2El) prev2El.textContent = '';
             if (prevEl) prevEl.textContent = '';
             currEl.textContent = '. . .';
             if (nextEl) nextEl.textContent = '';
             if (next2El) next2El.textContent = '';
+            if (next3El) next3El.textContent = '';
             return;
         }
 
@@ -164,18 +171,25 @@ const LyricsEngine = (() => {
         var hasTranslation = curr && curr.translation;
 
         if (hasTranslation) {
+            if (prev3El) prev3El.style.display = 'none';
             if (prev2El) prev2El.style.display = 'none';
             if (next2El) next2El.style.display = 'none';
+            if (next3El) next3El.style.display = 'none';
         } else {
+            if (prev3El) prev3El.style.display = '';
             if (prev2El) prev2El.style.display = '';
             if (next2El) next2El.style.display = '';
+            if (next3El) next3El.style.display = '';
         }
 
+        var prev3 = idx > 2 ? lyrics[idx - 3] : null;
         var prev2 = idx > 1 ? lyrics[idx - 2] : null;
         var prev = idx > 0 ? lyrics[idx - 1] : null;
         var next = idx < lyrics.length - 1 ? lyrics[idx + 1] : null;
         var next2 = idx < lyrics.length - 2 ? lyrics[idx + 2] : null;
+        var next3 = idx < lyrics.length - 3 ? lyrics[idx + 3] : null;
 
+        if (prev3El) prev3El.textContent = (prev3 && prev3.original && !prev3.isInterlude) ? prev3.original : '';
         if (prev2El) prev2El.textContent = (prev2 && prev2.original && !prev2.isInterlude) ? prev2.original : '';
         if (prevEl) {
             if (hasTranslation && prev && prev.original && !prev.isInterlude) {
@@ -205,6 +219,7 @@ const LyricsEngine = (() => {
             }
         }
         if (next2El) next2El.textContent = (next2 && next2.original && !next2.isInterlude) ? next2.original : '';
+        if (next3El) next3El.textContent = (next3 && next3.original && !next3.isInterlude) ? next3.original : '';
     }
 
     function getLineSpacing() { return typeof Settings !== 'undefined' ? Settings.get('lyricLineSpacing') : 8; }
@@ -281,6 +296,14 @@ const LyricsEngine = (() => {
         containerEl = container; contentEl = content;
         var ro = new ResizeObserver(() => { shouldTransit = false; updateLayout(false); });
         ro.observe(containerEl);
+        // Apply initial lyric alignment
+        var lyricAlign = (typeof Settings !== 'undefined') ? (Settings.get('lyricAlign') || 'center') : 'center';
+        setTimeout(function() {
+            document.querySelectorAll('.lyrics-line').forEach(function(el) {
+                el.style.textAlign = lyricAlign;
+                el.style.transformOrigin = lyricAlign === 'left' ? 'left center' : lyricAlign === 'right' ? 'right center' : 'center center';
+            });
+        }, 100);
         containerEl.addEventListener('wheel', function(e) {
             e.preventDefault();
             userScrolling = true;

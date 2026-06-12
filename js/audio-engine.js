@@ -12,6 +12,11 @@ const AudioEngine = (() => {
     let currentRate = 1;
     let updateInterval = null;
 
+    // Web Audio API for visualization
+    let audioContext = null;
+    let analyser = null;
+    let sourceNode = null;
+
     // Song cache to avoid reloading
     const songCache = new Map();
     const CACHE_MAX = 50;
@@ -38,7 +43,8 @@ const AudioEngine = (() => {
         end: [],
         timeupdate: [],
         load: [],
-        error: []
+        error: [],
+        loading: []
     };
 
     function on(event, callback) {
@@ -77,6 +83,7 @@ const AudioEngine = (() => {
             return;
         }
 
+        emit('loading');
         sound = new Howl({
             src: [url],
             html5: true,
@@ -134,6 +141,24 @@ const AudioEngine = (() => {
             onloaderror: (id, err) => { console.error('Load error:', err); }
         });
         sound.rate(currentRate);
+
+        // Setup Web Audio API for visualization
+        try {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            if (sound._sounds && sound._sounds[0] && sound._sounds[0]._node) {
+                if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+                sourceNode = audioContext.createMediaElementSource(sound._sounds[0]._node);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                sourceNode.connect(analyser);
+                analyser.connect(audioContext.destination);
+            }
+        } catch(e) { console.error('Web Audio API setup error:', e); }
     }
 
     function pause() {
@@ -285,6 +310,7 @@ const AudioEngine = (() => {
         setRate,
         getRate,
         getIsPlaying,
+        getAnalyser: function() { return analyser; },
         on,
         off,
         get isMuted() { return isMuted; }

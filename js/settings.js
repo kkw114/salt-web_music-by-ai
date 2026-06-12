@@ -19,7 +19,7 @@ const Settings = (() => {
     immersiveColor: 'off', // off, primary, secondary, tertiary
     coverRotate: false,
     coverRotateSpeed: 20,
-    coverSize: 200,
+    coverSize: 350,
 
     // Background
     bgType: 'blur',
@@ -39,7 +39,7 @@ const Settings = (() => {
     solidFollowAccent: false,
     rotateBgSpeed: 15,
     rotateBgBlur: 30,
-    rotateBgZoom: 180,
+    rotateBgZoom: 185,
     fluidBgBlur: 10,
     fluidBgSpeed: 25,
 
@@ -54,6 +54,7 @@ const Settings = (() => {
     showTranslation: true,
     showRomaji: false,
     lyricAlignment: 45,
+    lyricAlign: 'center',
     lyricGlow: false,
     textShadow: false,
     customFontFamily: '',
@@ -95,7 +96,7 @@ const Settings = (() => {
     webdavConnections: [],
 
     // NetEase
-    neteaseQuality: '320000',
+    neteaseQuality: '320000', // 音质：192000(LQ), 320000(HQ), flac(FLAC)
     neteaseVipType: 'auto', // auto, vip, svip
     neteaseDefaultDaily: false,
   };
@@ -227,6 +228,7 @@ const Settings = (() => {
         root.style.setProperty('--cover-size', get('coverSize') + 'px');
         root.style.setProperty('--font-size-lyric', `${get('lyricFontSize')}px`);
     root.style.setProperty('--lyric-alignment', `${get('lyricAlignment')}%`);
+    var lyricAlign = get('lyricAlign') || 'center';
     root.style.setProperty('--rnp-lyric-weight', get('lyricFontWeight'));
     root.style.setProperty('--font-size-trans', `${get('transFontSize')}px`);
     root.style.setProperty('--rnp-trans-weight', get('transFontWeight'));

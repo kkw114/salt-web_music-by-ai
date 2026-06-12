@@ -8,7 +8,7 @@ const ColorUtils = (() => {
     const canvas = document.getElementById('color-canvas') || document.createElement('canvas');
     canvas.style.display = 'none';
     if (!canvas.parentNode) document.body.appendChild(canvas);
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
     // RGB to HSL
     function rgb2Hsl([r, g, b]) {
